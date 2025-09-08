@@ -1,0 +1,212 @@
+/* === Calendar grid + Leads lanes (scoped) === */
+
+/* Calendar container (visual + busy) */
+.calendar-grid-container {
+  background-color: rgba(26, 32, 44, 0.7);
+  border-radius: 0.75rem;
+  border: 1px solid #6b4d3a;
+  padding: 1rem;
+  margin-top: 1.5rem;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.3);
+  width: 100%;
+  max-height: none !important;
+  overflow: visible !important;
+  /* left gutter so lane labels don’t overlap the grid */
+  padding-left: 120px;
+}
+.calendar-grid-container h4 {
+  font-size: 1.1rem; font-weight: 600; color: #d4af37; margin-bottom: 0.75rem;
+}
+
+#main-calendar-grid .lead-lane { position: relative; }
+#main-calendar-grid .lane-label {
+  position: absolute;
+  left: -110px;            /* adjust with the padding-left above */
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: .75rem;
+  color: #a0aec0;
+  opacity: .9;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* --- Grid: row 1 = leads lanes, row 2 = day columns --- */
+#main-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: auto 1fr;   /* lanes / days */
+  gap: 10px;
+  justify-items: stretch;
+  align-items: start;
+  width: 100%;
+}
+
+/* Day columns live on row 2 */
+#main-calendar-grid > .day-column { grid-row: 2; }
+
+/* ---------- Leads lanes (stacked 3 lanes, chips never overlap) ---------- */
+/* MUST span all 7 columns and be a grid itself */
+#main-calendar-grid > .leads-lanes {
+  grid-row: 1;
+  grid-column: 1 / -1;        /* span all day columns */
+  display: grid;              /* grid of lanes */
+  grid-template-rows: repeat(3, 44px);  /* 3 lanes; chips inside make the 9 “boxes” */
+  row-gap: 6px;
+  position: relative;
+  z-index: 2;
+}
+
+/* Each lane is a 7-col grid (one horizontal track per lane) */
+#main-calendar-grid .lead-lane {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  column-gap: 10px;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Chips span 1–2 days; lanes stack vertically so chips never overlap */
+#main-calendar-grid .lead-chip {
+  --start: 1;     /* 1..7 (Mon..Sun) */
+  --span: 1;      /* 1 or 2 */
+  grid-column: var(--start) / span var(--span);
+
+  display: flex; flex-direction: column; gap: 6px;
+  min-height: 44px; padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px dashed rgba(245, 158, 11, .55);
+  background: rgba(245, 158, 11, .12);
+  color: #fde68a; font-size: .85rem;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+  overflow: visible; /* allow inner drawer/card shadows to render */
+}
+#main-calendar-grid .lead-chip .title { font-weight: 700; letter-spacing: .3px; color: #fde68a; }
+#main-calendar-grid .lead-chip .meta  { opacity: .85; font-size: .8rem; color: #fcd34d; }
+#main-calendar-grid .lead-chip.is-locked { border-style: solid; background: rgba(253,230,138,.10); }
+#main-calendar-grid .lead-chip.is-hot    { border-color:#ef4444; background:rgba(239,68,68,.12); color:#fecaca; }
+
+/* Small header row for each chip (since leads.js renders .chip-header) */
+#main-calendar-grid .lead-chip .chip-header {
+  display: flex; align-items: center; gap: 8px;
+}
+
+/* ✅ ONLY hide legacy visuals inside day columns (do NOT hide lane buckets) */
+.day-column .leads-band,
+.day-column .leads-drawer,
+.day-column .fill-box.leads-box { display: none !important; }
+
+/* ---------- Day columns / slots / overflow ---------- */
+.day-column {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  font-size: 0.8rem; color: #a0aec0; font-weight: 500; width: 100%;
+}
+.day-column .day-name { font-weight: 600; color: #e2e8f0; }
+.day-body { width: 100%; display: flex; flex-direction: column; }
+
+.fill-box {
+  width: 100%; min-height: 180px; display: flex; flex-direction: column; gap: 8px;
+  padding: 6px; border-radius: 10px; border: 1px dashed #ccc; background-color: #2d3748;
+  box-shadow: inset 0 0 5px rgba(255,255,255,0.1);
+  cursor: pointer; margin-bottom: 1.5rem; overflow: visible; max-height: none;
+}
+.fill-box.filled { background-color: #38a169; box-shadow: inset 0 0 5px rgba(56, 161, 105, 0.5); }
+.fill-box.filled.active { background-color: #f6ad55; }
+.fill-box.locked { outline: 2px solid rgba(0, 121, 107, 0.7); }
+.fill-box:hover { transform: scale(1.02); transition: transform 0.2s ease-in-out; }
+.fill-box.over { border-color: #f6ad55; background-color: rgba(246, 173, 85, 0.2); }
+
+.overflow-drawer {
+  width: 100%; min-height: 48px; padding: 6px; border-radius: 10px;
+  border: 1px dashed #999; background-color: #1f2937; color: #e2e8f0;
+  font-size: 0.85rem; text-align: left; overflow: visible;
+}
+.overflow-drawer.active { background-color: #4a5568; border-color: #f6ad55; }
+.overflow-drawer.over { border-color: #f6ad55; background-color: rgba(246,173,85,0.2); }
+
+/* ✅ Make lane buckets look/behave like drawers (single definition) */
+#main-calendar-grid .lead-chip .leads-drawer {
+  width: 100%;
+  min-height: 44px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px dashed #999;
+  background-color: #1f2937;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  text-align: left;
+  overflow: visible;
+}
+#main-calendar-grid .lead-chip .leads-drawer.active { background-color: #4a5568; border-color: #f6ad55; }
+#main-calendar-grid .lead-chip .leads-drawer.over   { border-color: #f6ad55; background-color: rgba(246,173,85,.2); }
+
+/* ---------- Wine cards ---------- */
+.wine-box {
+  font-size: 0.9rem; padding: 6px; border-radius: 10px; box-shadow: 0 0 4px rgba(0,0,0,0.2);
+  margin: 0; background-color: #f9f9f9; color: #333; text-align: left; border: 1px solid #ddd;
+}
+.wine-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; gap: 6px; }
+.wine-name { font-weight: bold; font-size: 1rem; color: #333; }
+.wine-details { font-size: 0.8rem; color: #666; }
+.muted { color: #6b7280; }
+
+.wine-submeta {
+  margin-top: 4px; display: flex; flex-wrap: wrap; gap: 6px 10px;
+  font-size: .78rem; color: #4b5563;
+}
+.wine-last-campaign {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 8px; border-radius: 9999px;
+  background: rgba(255,255,255,.6); color: #111827; border: 1px solid rgba(0,0,0,.08);
+}
+
+.wine-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.wine-headline{ display:flex; flex-direction:column; min-width:0; }
+.wine-actions{ display:flex; align-items:center; gap:8px; flex:0 0 auto; margin-left:8px; }
+.badge-auto{ background:#374151; color:#e5e7eb; border-radius:9999px; padding:2px 8px; font-size:.7rem; border:1px solid rgba(255,255,255,.12); }
+.lock-icon{ border:0; background:transparent; cursor:pointer; font-size:1rem; }
+
+/* States */
+.wine-box.locked { background-color: #e0f7fa; border-left: 5px solid #00796b; }
+.wine-box.dragging { opacity: 0.4; }
+.wine-box.selected {
+  border: 3px solid #d4af37 !important; outline: none !important;
+  box-shadow: 0 0 16px rgba(212,175,55,.60), inset 0 0 26px rgba(212,175,55,.15) !important;
+}
+.lock-icon { cursor: pointer; font-size: 1rem; margin-left: 6px; border: 0; background: transparent; }
+.wine-box[data-locked="true"] .lock-icon i.fa-lock { color: #d4af37; }
+.wine-box[data-locked="false"] .lock-icon i.fa-lock-open { color: #a0aec0; }
+.lock-icon:hover i { transform: scale(1.05); }
+
+/* Wine-type themes */
+.wine-box.wine-type-white     { background:#FFFDD0; color:#333; }
+.wine-box.wine-type-rose      { background:#FFC1CC; color:#333; }
+.wine-box.wine-type-sparkling { background:#FFFF99; color:#333; }
+.wine-box.wine-type-dessert   { background:#D4A017; color:#111; }
+.wine-box.wine-type-red {
+  background: #800020;
+  color: #d4af37;
+  border-color: rgba(212,175,55,.55);
+}
+.wine-box.wine-type-red .wine-name,
+.wine-box.wine-type-red .wine-details,
+.wine-box.wine-type-red .muted,
+.wine-box.wine-type-red .wine-submeta,
+.wine-box.wine-type-red .wine-last-campaign,
+.wine-box.wine-type-red .lock-icon i { color: #d4af37 !important; }
+.wine-box.wine-type-red .wine-last-campaign {
+  background: rgba(212,175,55,.12);
+  border-color: rgba(212,175,55,.45);
+}
+
+/* Badges */
+.wine-header .badge {
+  padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem;
+  background: #edf2f7; color: #2d3748;
+}
+.wine-box[data-locked="true"]:not(.wine-type-red) .badge { background-color: #d4af37; color: #2d3748; }
+.match-badge { padding: 2px 6px; border-radius: 8px; font-size: 0.7rem; margin-left: 6px; vertical-align: middle; }
+.badge-perfect { background-color: #4CAF50; color: #fff; }
+.badge-strong  { background-color: #2196F3; color: #fff; }
+.badge-moderate{ background-color: #FF9800; color: #fff; }
+.badge-low     { background-color: #9E9EDE; color: #fff; }
