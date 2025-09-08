@@ -1,3 +1,4 @@
+console.log("[AVU] calendar.js loaded v-fix-wireDelegation");
 // static/js/calendar.js
 import * as U from "./utils.js";
 const { CAL, URLS, NUM_SLOTS, DAYS, weekSnapKey, weekLockedKey } = U;
@@ -170,10 +171,22 @@ handleWeekYearChange = async function handleWeekYearChange(year, week) {
   applyAllDayColors(year, week);
 };
 
+// Clears only the grid contents
+function clearCalendar(rootSel = "#calendar-grid") {
+  const root = U.$(rootSel);
+  if (root) root.innerHTML = "";
+}
+
+// No-op delegated handler (satisfies old calls safely)
+function wireCalendarDelegation(root = document) {
+  // reserved for delegated events; keep or expand as needed
+}
+
 export {
   buildCalendarSkeleton,
-  renderDefaultScheduleFromData,
+  clearCalendar,
   handleWeekYearChange,
+  renderDefaultScheduleFromData,
   loadFullCalendarSnapshot,
   saveFullCalendarSnapshot,
   loadLockedForWeek,
@@ -181,4 +194,5 @@ export {
   mergeScheduleWithLocks,
   applyAllDayColors,
   setDayColor,
+  wireCalendarDelegation,
 };

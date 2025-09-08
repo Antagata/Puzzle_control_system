@@ -6,7 +6,32 @@ from time import time as now_time
 import threading, json, logging, uuid, os
 import pandas as pd
 
-from config import Settings
+# --- Settings/config (merged from config.py)
+class Settings:
+    # Flask
+    DEBUG = os.getenv("FLASK_DEBUG", "0") == "1"
+    SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
+    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 512 * 1024))  # 512KB JSON posts
+
+    # Default OneDrive base
+    _BASE = Path.home() / "OneDrive - AVU SA" / "AVU CPI Campaign" / "Puzzle_control_Reports"
+
+    # Paths from env with OneDrive fallback
+    AVU_SOURCE_PATH = Path(os.getenv("AVU_SOURCE_PATH", str(_BASE / "SOURCE_FILES")))
+    AVU_OUTPUT_PATH = Path(os.getenv("AVU_OUTPUT_PATH", str(_BASE / "IRON_DATA")))
+
+    # Expose with the names the app expects
+    SOURCE_PATH = AVU_SOURCE_PATH
+    IRON_DATA_PATH = AVU_OUTPUT_PATH
+
+    @staticmethod
+    def missing_path_messages():
+        msgs = []
+        if not Settings.SOURCE_PATH.exists():
+            msgs.append(f"SOURCE path not found: {Settings.SOURCE_PATH}")
+        if not Settings.IRON_DATA_PATH.exists():
+            msgs.append(f"OUTPUT path not found: {Settings.IRON_DATA_PATH}")
+        return msgs
 from services.calendar_service import set_engine_ready
 from utils.notebook_runner import run_notebook as nb_run
 from utils.notebook_status import update_status, get_status, Heartbeat
@@ -18,11 +43,44 @@ os.environ.setdefault(
     r"C:\Users\Marco.Africani\OneDrive - AVU SA\AVU CPI Campaign\Puzzle_control_Reports\IRON_DATA"
 )
 
+
+
 # --- Flask app (CREATE ONCE)
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config.from_object(Settings)
 app.config["JSON_AS_ASCII"] = False
 app.config["MAX_CONTENT_LENGTH"] = Settings.MAX_CONTENT_LENGTH
+
+# --- Centralize all config paths (including DATA_DIR)
+BASE_DIR = Path(__file__).resolve().parent
+app.config.update(
+    BASE_DIR=BASE_DIR,
+    DATA_DIR=BASE_DIR / "data",
+    NOTEBOOKS_DIR=BASE_DIR / "notebooks",
+    OUTPUT_DIR=BASE_DIR / "notebooks",
+    TIMEZONE="Europe/Zurich",
+    JSON_SORT_KEYS=False,
+    SEND_FILE_MAX_AGE_DEFAULT=0,
+)
+
+# --- Centralized logging (file + console)
+import logging, os
+from logging.handlers import RotatingFileHandler
+def configure_logging(app):
+    os.makedirs("logs", exist_ok=True)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    fh = RotatingFileHandler("logs/app.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(fmt)
+    app.logger.addHandler(fh)
+    # also mirror to console
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(fmt)
+    app.logger.addHandler(ch)
+    app.logger.setLevel(logging.INFO)
+configure_logging(app)
+
 
 # --- Paths (DEFINE BEFORE USE)
 IRON_DATA_PATH: Path = Settings.IRON_DATA_PATH
@@ -51,23 +109,38 @@ app.config["CAMPAIGN_HISTORY_CSV"] = os.environ.get("CAMPAIGN_HISTORY_CSV", defa
 def favicon():
     return send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
-# --- Blueprints (import AFTER app exists; register ONCE)
-from routes.calendar import calendar_bp, calendar_api, notebook_runner_api
-from routes.filters import filters_bp
-from routes.cards import cards_bp
-from routes.campaign_index import campaign_bp
-from routes.leads import bp as leads_bp  # alias the leads blueprint
 
-app.register_blueprint(calendar_bp)
-app.register_blueprint(calendar_api)
-app.register_blueprint(notebook_runner_api)
-app.register_blueprint(filters_bp)
-app.register_blueprint(cards_bp)
-app.register_blueprint(campaign_bp)
-app.register_blueprint(leads_bp)
+# --- Blueprint registration (after config is set)
+def register_blueprints(app):
+    from routes.calendar import calendar_bp, calendar_api, notebook_runner_api
+    from routes.filters import filters_bp
+    from routes.cards import cards_bp
+    from routes.campaign_index import campaign_bp
+    from routes.leads import bp as leads_bp
+    app.register_blueprint(calendar_bp)
+    app.register_blueprint(calendar_api, url_prefix="/api/v2")
+    app.register_blueprint(notebook_runner_api)
+    app.register_blueprint(filters_bp)
+    app.register_blueprint(cards_bp)
+    app.register_blueprint(campaign_bp)
+    app.register_blueprint(leads_bp)
+
+register_blueprints(app)
 
 # --- Logging (request ID, duration)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# --- Logging (request ID, duration)
+
+# JSON error responses
+from flask import jsonify
+
+@app.errorhandler(404)
+def not_found(_):
+    return jsonify({"ok": False, "error": "not found"}), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    app.logger.exception("Unhandled 500")
+    return jsonify({"ok": False, "error": "internal server error"}), 500
 
 @app.before_request
 def _req_start():
