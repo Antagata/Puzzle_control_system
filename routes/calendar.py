@@ -1,30 +1,9 @@
-from flask import Blueprint as _Blueprint
-# --- Notebook runner endpoints ---
-notebook_runner_api = _Blueprint("notebook_runner_api", __name__)
-
-@notebook_runner_api.post("/api/run-notebook")
-def run_notebook():
-    payload = request.get_json(force=True) or {}
-    notebook = payload.get("notebook")
-    year = payload.get("year")
-    week = payload.get("week")
-    filters = payload.get("filters", {})
-    # Call your actual runner; here stub a fake job id
-    job_id = "job-" + str(week)
-    # TODO: trigger utils.notebook_runner.run_async(notebook, year, week, filters)
-    return jsonify({"job_id": job_id})
-
-@notebook_runner_api.get("/api/status")
-def job_status():
-    job_id = request.args.get("job_id")
-    # TODO: read real status from utils/notebook_status.py
-    # Stub: pretend it's done
-    return jsonify({"state": "completed"})
 
 # routes/calendar.py
 """Calendar + notebook endpoints."""
 
 from __future__ import annotations
+
 from flask import Blueprint, jsonify, request
 from pathlib import Path
 import json, logging
@@ -147,3 +126,24 @@ def get_schedule():
         payload = attach_cards(schedule_fixed)
 
     return _nocache(jsonify(payload))
+# --- Notebook runner endpoints ---
+notebook_runner_api = Blueprint("notebook_runner_api", __name__)
+
+@notebook_runner_api.post("/api/run-notebook")
+def run_notebook():
+    payload = request.get_json(force=True) or {}
+    notebook = payload.get("notebook")
+    year = payload.get("year")
+    week = payload.get("week")
+    filters = payload.get("filters", {})
+    # Call your actual runner; here stub a fake job id
+    job_id = "job-" + str(week)
+    # TODO: trigger utils.notebook_runner.run_async(notebook, year, week, filters)
+    return jsonify({"job_id": job_id})
+
+@notebook_runner_api.get("/api/status")
+def job_status():
+    job_id = request.args.get("job_id")
+    # TODO: read real status from utils/notebook_status.py
+    # Stub: pretend it's done
+    return jsonify({"state": "completed"})

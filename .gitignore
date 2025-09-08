@@ -1,0 +1,9 @@
+﻿__pycache__/
+*.py[cod]
+.venv/
+*.env
+.env*
+.vscode/
+*.pkl
+notebooks/executed_*.ipynb
+logs/
