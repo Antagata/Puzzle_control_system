@@ -21,9 +21,6 @@ export function mapUIFiltersForBackend() {
   const calendar_day = (window.__avuSelectedCellDay || (window.__avuState.selectedWineData?.day ?? null)) || null;
   return { loyalty, wine_type, bottle_size, price_tier_bucket, last_stock, last_stock_threshold, seasonality_boost, style, calendar_day };
 }
-// shim if compact toggle was removed from the UI
-export function injectFiltersCompactToggle() { /* no-op */ }
-
 
 export function markFiltersDirty() {
   window.__avuState.filtersDirty = true;
@@ -39,6 +36,20 @@ export function markFiltersDirty() {
   }
   window?.recalcAndUpdateGauge?.({ animate: true });
 }
+
+export function injectFiltersCompactToggle(dock) {
+  if (!dock || document.getElementById("filters-compact-btn")) return;
+  const btn = document.createElement("button");
+  btn.id = "filters-compact-btn";
+  btn.type = "button";
+  btn.textContent = "Compact filters";
+  btn.addEventListener("click", () => {
+    dock.classList.toggle("filters-compact");
+    btn.textContent = dock.classList.contains("filters-compact") ? "Expand filters" : "Compact filters";
+  });
+  dock.appendChild(btn);
+}
+
 
 export function clearFiltersDirty() {
   window.__avuState.filtersDirty = false;
@@ -111,7 +122,7 @@ export function ensureFiltersDock() {
       }
     }
   });
-  
+  injectFiltersCompactToggle(dock);
 }
 
 // filtering logic for a calendar blob

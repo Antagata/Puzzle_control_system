@@ -5,31 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AVU puzzle control</title>
 
-  <!-- Tailwind + fonts/icons -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet"
-        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
-        referrerpolicy="no-referrer" />
-  <link rel="stylesheet"
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" />
 
-  <!-- App styles (base first, then calendar) -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}?v={{ app_version }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/calendar.css') }}?v={{ app_version }}">
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    referrerpolicy="no-referrer"
+  />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='style.css') }}?v={{ app_version|default(1) }}"
+  />
 
-  <!-- Favicon -->
-  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Ctext y='50%25' x='50%25' dominant-baseline='middle' text-anchor='middle' font-size='48'%3E🍷%3C/text%3E%3C/svg%3E">
-
-  <!-- App entry (ESM) -->
-  <script type="module" src="{{ url_for('static', filename='director_app.js', v=app_version) }}"></script>
-
-  <!-- Tiny extras only -->
+  <!-- Small extras only for gauge labels (main look lives in style.css) -->
   <style>
-    .fd-narrow{max-width:260px;flex:0 0 260px}
-    .gauge-delta{ text-align:center; margin-bottom:6px; opacity:.9 }
-    .gauge-small-label{ font-size:.75em }
-    .gauge-tick-label{ font-size:.85em }
+    .fd-narrow { max-width: 260px; flex: 0 0 260px; }
+    .gauge-delta { text-align: center; margin-bottom: 6px; opacity: .9; }
+    .gauge-small-label { font-size: 0.75em; }
+    .gauge-tick-label { font-size: 0.85em; }
   </style>
 </head>
 <body>
@@ -69,9 +66,15 @@
         <div class="plugin-body">
           <div class="gauge-delta" id="gauge-delta-text" aria-live="polite">◎ Balanced · Δ=0.00</div>
 
-          <svg class="unified-gauge-svg" viewBox="0 0 200 120" role="img" aria-labelledby="gauge-title gauge-desc">
+          <svg
+            class="unified-gauge-svg"
+            viewBox="0 0 200 120"
+            role="img"
+            aria-labelledby="gauge-title gauge-desc"
+          >
             <title id="gauge-title">Price alignment gauge</title>
             <desc id="gauge-desc">Shows whether the current calendar skews under/over clients’ usual spend</desc>
+
             <defs>
               <linearGradient id="cpiGradientOverall" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%"    stop-color="#22c55e" />
@@ -87,8 +90,7 @@
             <path class="gauge-fill-arc" id="gauge-fill-arc"
                   d="M 25 100 A 75 75 0 0 1 175 100"
                   stroke="url(#cpiGradientOverall)"
-                  stroke-dasharray="110 102"
-                  filter="url(#softShadow)"></path>
+                  stroke-dasharray="110 102" filter="url(#softShadow)"></path>
 
             <g class="gauge-ticks" opacity="0.55">
               <line x1="52"  y1="86" x2="56"  y2="90"></line>
@@ -103,7 +105,8 @@
                      transform="rotate(0 100 100)"></polygon>
             <circle class="gauge-cap" cx="100" cy="100" r="4"></circle>
 
-            <text x="100" y="82" text-anchor="middle" class="gauge-label-cpi" id="gauge-cpi-value">0.50</text>
+            <text x="100" y="82" text-anchor="middle"
+                  class="gauge-label-cpi" id="gauge-cpi-value">0.50</text>
 
             <text x="20"  y="112" class="gauge-tick-label gauge-small-label">Under</text>
             <text x="180" y="112" class="gauge-tick-label gauge-small-label" text-anchor="end">Over</text>
@@ -119,7 +122,7 @@
                aria-live="polite"
                aria-label="Top 3 recommended wines"
                hidden>
-            <!-- Cards injected by script below -->
+            <!-- Cards injected by inline script below -->
           </div>
         </div>
       </div>
@@ -134,7 +137,8 @@
           data-notebook="AVU_ignition_1.ipynb"
           type="button"
           title="Start AVU Engine"
-          aria-label="Start AVU Engine">
+          aria-label="Start AVU Engine"
+        >
           <i class="fas fa-fire" aria-hidden="true"></i>
           <span>Start AVU Engine</span>
         </button>
@@ -146,7 +150,8 @@
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        aria-label="Notebook status">
+        aria-label="Notebook status"
+      >
         <div class="status-header">
           <div id="status-badge" class="badge">Idle</div>
           <div id="status-notebook" class="subtle" aria-live="polite"></div>
@@ -160,7 +165,8 @@
             aria-valuemax="100"
             aria-valuenow="0"
             aria-describedby="progress-percent"
-            aria-label="Notebook progress">
+            aria-label="Notebook progress"
+          >
             <div id="progress-bar-fill" class="progress-bar-fill" style="width:0%"></div>
           </div>
           <div id="progress-percent" class="progress-percent">0%</div>
@@ -174,7 +180,6 @@
 
     <!-- ================= Filters ================= -->
     <section id="filters-panel" aria-label="Campaign filters">
-      <!-- Loyalty -->
       <div class="fd-item">
         <label id="loyalty-label">🎚 Loyalty Level:</label>
         <div class="toggle-buttons vertical" role="group" aria-labelledby="loyalty-label">
@@ -188,23 +193,13 @@
         </div>
       </div>
 
-      <!-- Client name (moved here so it never disturbs the calendar) -->
-      <div class="fd-item fd-narrow" style="min-width:220px">
-        <label for="clientName">👤 Client name (optional)</label>
-        <input
-          id="clientName"
-          type="text"
-          class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-          placeholder="Valued Client" />
-      </div>
-
-      <!-- Price tier -->
       <div class="fd-item">
         <label id="price-tier-label" for="price-tier">🎛️ Price Tier:</label>
         <select
           id="price-tier"
           class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-          aria-labelledby="price-tier-label">
+          aria-labelledby="price-tier-label"
+        >
           <option value="">All</option>
           <option value="Budget">&lt; CHF 50 — Budget</option>
           <option value="Mid-range">CHF 50–99 — Mid-range</option>
@@ -214,7 +209,6 @@
         </select>
       </div>
 
-      <!-- Wine type -->
       <div class="fd-item fd-narrow">
         <label id="wine-type-label">🎚 Wine Type:</label>
         <div class="toggle-buttons" role="group" aria-labelledby="wine-type-label">
@@ -229,13 +223,13 @@
         </div>
       </div>
 
-      <!-- Size -->
       <div class="fd-item">
         <label for="bottle-size-slicer">🍾 Size:</label>
         <select
           id="bottle-size-slicer"
           title="Bottle size"
-          class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500">
+          class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+        >
           <option value="375">Half (375ml)</option>
           <option value="750" selected>Standard (750ml)</option>
           <option value="1500">Magnum (1.5L)</option>
@@ -246,12 +240,11 @@
         <select
           id="bigger-size-selector"
           title="Bigger bottle size"
-          class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 mt-2 hidden">
-        </select>
+          class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500 mt-2 hidden"
+        ></select>
         <span id="bottle-size-value" class="text-sm text-gray-400 mt-1" aria-live="polite">750ml</span>
       </div>
 
-      <!-- Toggles -->
       <div class="fd-item">
         <label class="flex items-center gap-2" for="last-stock-checkbox" title="Filter last stock under 10">
           <input type="checkbox" id="last-stock-checkbox" />
@@ -265,19 +258,21 @@
         </label>
       </div>
 
-      <!-- Analytics size -->
       <div class="fd-item">
         <label for="pb-size-filter">📏 Analytics Size</label>
         <select
           id="pb-size-filter"
           class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-          title="Set analytics height">
+          title="Set analytics height"
+        >
           <option value="auto" selected>Auto</option>
           <option value="short">Short</option>
           <option value="tall">Tall</option>
           <option value="full">Full</option>
         </select>
       </div>
+
+
     </section>
 
     <!-- ================= Analytics iframe ================= -->
@@ -291,13 +286,23 @@
         src="https://app.powerbi.com/view?r=YOUR_REPORT_ID"
         style="border: 1px solid #6b4d3a; border-radius: 8px;"
         loading="lazy"
-        allowfullscreen>
-      </iframe>
+        allowfullscreen
+      ></iframe>
     </section>
 
     <!-- ================= Offer actions + Calendar ================= -->
     <section class="control-panel" aria-label="Offer actions">
       <div class="left-column">
+        <div class="control-item">
+          <label for="clientName">👤 Client name (optional)</label>
+          <input
+            id="clientName"
+            type="text"
+            class="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+            placeholder="Valued Client"
+          />
+        </div>
+
         <section class="actions mt-2" aria-label="Offer generation">
           <button
             class="run-btn circular-button success"
@@ -306,11 +311,11 @@
             type="button"
             title="Generate Offer from selected wine"
             aria-label="Generate Offer from selected wine"
-            aria-disabled="true">
+            aria-disabled="true"
+          >
             <i class="fas fa-box" aria-hidden="true"></i>
             <span>Generate Offer</span>
           </button>
-
           <button
             class="run-btn circular-button success mt-4"
             data-notebook="TAILOR_MADE_OFFER.ipynb"
@@ -318,7 +323,8 @@
             type="button"
             title="Generate Tailor-made Offer from selected wine"
             aria-label="Generate Tailor-made Offer from selected wine"
-            aria-disabled="true">
+            aria-disabled="true"
+          >
             <i class="fas fa-magic" aria-hidden="true"></i>
             <span>Generate Tailor-made offer</span>
           </button>
@@ -333,126 +339,21 @@
               id="weekSelector"
               title="Select ISO week"
               class="week-dropdown p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-yellow-500"
-              aria-controls="main-calendar-grid"></select>
-
+              aria-controls="main-calendar-grid"
+            ></select>
             <button
               id="loadScheduleBtn"
               class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors duration-200 opacity-50 pointer-events-none"
               disabled
               type="button"
               title="Run Start AVU Engine first"
-              aria-label="Load new schedule for selected week">
+              aria-label="Load new schedule for selected week"
+            >
               🔄 Load new schedule
             </button>
           </div>
 
-          <!-- Calendar grid (JS will rebuild this; below is a static fallback so layout shows even if JS fails) -->
-          <div class="calendar-grid" id="main-calendar-grid" aria-live="polite">
-            <!-- Lanes row (row 1) -->
-            <div class="leads-lanes" style="grid-row:1;grid-column:1/-1;display:grid;grid-template-rows:repeat(3,44px);row-gap:6px">
-              <!-- Lane 0 — CH -->
-              <div class="lead-lane" data-lane="0" style="display:grid;grid-template-columns:repeat(7,1fr);column-gap:10px;align-items:center">
-                <span class="lane-label">CH</span>
-                <div class="lead-chip" style="--start:2;--span:2">
-                  <div class="chip-header"><span class="title">CH — A</span><span class="meta">Team A</span></div>
-                  <div class="leads-drawer" data-day="Tuesday" data-lane="0"></div>
-                </div>
-                <div class="lead-chip" style="--start:4;--span:2">
-                  <div class="chip-header"><span class="title">CH — B</span><span class="meta">Team A</span></div>
-                  <div class="leads-drawer" data-day="Thursday" data-lane="0"></div>
-                </div>
-                <div class="lead-chip" style="--start:6;--span:2">
-                  <div class="chip-header"><span class="title">CH — C</span><span class="meta">Team A</span></div>
-                  <div class="leads-drawer" data-day="Saturday" data-lane="0"></div>
-                </div>
-              </div>
-
-              <!-- Lane 1 — World -->
-              <div class="lead-lane" data-lane="1" style="display:grid;grid-template-columns:repeat(7,1fr);column-gap:10px;align-items:center">
-                <span class="lane-label">World</span>
-                <div class="lead-chip" style="--start:2;--span:2">
-                  <div class="chip-header"><span class="title">World — A</span><span class="meta">Team B</span></div>
-                  <div class="leads-drawer" data-day="Tuesday" data-lane="1"></div>
-                </div>
-                <div class="lead-chip" style="--start:4;--span:2">
-                  <div class="chip-header"><span class="title">World — B</span><span class="meta">Team B</span></div>
-                  <div class="leads-drawer" data-day="Thursday" data-lane="1"></div>
-                </div>
-                <div class="lead-chip" style="--start:6;--span:2">
-                  <div class="chip-header"><span class="title">World — C</span><span class="meta">Team B</span></div>
-                  <div class="leads-drawer" data-day="Saturday" data-lane="1"></div>
-                </div>
-              </div>
-
-              <!-- Lane 2 — Campaigns -->
-              <div class="lead-lane" data-lane="2" style="display:grid;grid-template-columns:repeat(7,1fr);column-gap:10px;align-items:center">
-                <span class="lane-label">Campaigns</span>
-                <div class="lead-chip" style="--start:2;--span:2">
-                  <div class="chip-header"><span class="title">VIP tasting</span><span class="meta">VIP</span></div>
-                  <div class="leads-drawer" data-day="Tuesday" data-lane="2"></div>
-                </div>
-                <div class="lead-chip" style="--start:4;--span:2">
-                  <div class="chip-header"><span class="title">Autumn promo</span><span class="meta">Mkt</span></div>
-                  <div class="leads-drawer" data-day="Thursday" data-lane="2"></div>
-                </div>
-                <div class="lead-chip" style="--start:6;--span:2">
-                  <div class="chip-header"><span class="title">Social</span><span class="meta">SM</span></div>
-                  <div class="leads-drawer" data-day="Saturday" data-lane="2"></div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Day columns row (row 2) -->
-            <div class="day-column" data-day="Monday">
-              <div class="day-name">Mon</div>
-              <div class="day-body">
-                <div class="fill-box" data-day="Monday"></div>
-                <div class="overflow-drawer" data-day="Monday"></div>
-              </div>
-            </div>
-            <div class="day-column" data-day="Tuesday">
-              <div class="day-name">Tue</div>
-              <div class="day-body">
-                <div class="fill-box" data-day="Tuesday"></div>
-                <div class="overflow-drawer" data-day="Tuesday"></div>
-              </div>
-            </div>
-            <div class="day-column" data-day="Wednesday">
-              <div class="day-name">Wed</div>
-              <div class="day-body">
-                <div class="fill-box" data-day="Wednesday"></div>
-                <div class="overflow-drawer" data-day="Wednesday"></div>
-              </div>
-            </div>
-            <div class="day-column" data-day="Thursday">
-              <div class="day-name">Thu</div>
-              <div class="day-body">
-                <div class="fill-box" data-day="Thursday"></div>
-                <div class="overflow-drawer" data-day="Thursday"></div>
-              </div>
-            </div>
-            <div class="day-column" data-day="Friday">
-              <div class="day-name">Fri</div>
-              <div class="day-body">
-                <div class="fill-box" data-day="Friday"></div>
-                <div class="overflow-drawer" data-day="Friday"></div>
-              </div>
-            </div>
-            <div class="day-column" data-day="Saturday">
-              <div class="day-name">Sat</div>
-              <div class="day-body">
-                <div class="fill-box" data-day="Saturday"></div>
-                <div class="overflow-drawer" data-day="Saturday"></div>
-              </div>
-            </div>
-            <div class="day-column" data-day="Sunday">
-              <div class="day-name">Sun</div>
-              <div class="day-body">
-                <div class="fill-box" data-day="Sunday"></div>
-                <div class="overflow-drawer" data-day="Sunday"></div>
-              </div>
-            </div>
-          </div>
+          <div class="calendar-grid" id="main-calendar-grid" aria-live="polite"></div>
         </div>
 
         <div class="control-group justify-end gap-4 mt-4">
@@ -484,7 +385,8 @@
         type="text"
         placeholder="Search wine name…"
         autocomplete="off"
-        title="Search wine" />
+        title="Search wine"
+      />
       <ul id="qa-suggestions" class="qa-s" role="listbox" aria-label="Wine suggestions"></ul>
 
       <label class="qa-l" for="qa-vintage">Vintage</label>
@@ -496,6 +398,10 @@
       </div>
     </div>
   </div>
+
+  <!-- keep just this one -->
+  <script type="module" src="{{ url_for('static', filename='app.js', v=app_version) }}"></script>
+
 
   <!-- Tiny helper to render Top 3 once the engine has populated the calendar -->
   <script>
@@ -510,6 +416,8 @@
       function pickTopThree() {
         const cards = Array.from(document.querySelectorAll('#main-calendar-grid .wine-box'));
         if (!cards.length) return [];
+
+        // Ignore items living in multi-day Leads boxes
         const items = cards
           .filter(c => !c.closest('.leads-box'))
           .map(c => ({
@@ -521,6 +429,7 @@
             stock: c.dataset.stock || '',
             day: c.dataset.day || ''
           }));
+
         if (!items.length) return [];
         items.sort((a, b) => b.cpi - a.cpi);
         return items.slice(0, 3);
@@ -529,6 +438,7 @@
       function renderTop() {
         const top = pickTopThree();
         if (!top.length) return;
+
         wrapEl.innerHTML = top.map((it, i) => `
           <div class="bg-gray-800/70 border border-amber-400/40 rounded-lg px-3 py-2 shadow-sm text-sm min-w-[180px]">
             <div class="flex items-center justify-between">
@@ -543,6 +453,7 @@
             </div>
           </div>
         `).join('');
+
         wrapEl.hidden = false;
         if (infoEl) infoEl.style.display = 'none';
       }
@@ -550,11 +461,15 @@
       document.addEventListener('DOMContentLoaded', () => {
         const grid = document.getElementById('main-calendar-grid');
         if (!grid) return;
+
+        // Observe calendar rendering (works after AVU_ignition_1.ipynb or schedule runs)
         const obs = new MutationObserver(() => {
           clearTimeout(grid._topRecDebounce);
           grid._topRecDebounce = setTimeout(renderTop, 150);
         });
         obs.observe(grid, { childList: true, subtree: true });
+
+        // Also try once in case content is already there
         setTimeout(renderTop, 800);
       });
     })();

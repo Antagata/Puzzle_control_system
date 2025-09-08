@@ -1,3 +1,14 @@
+/* Calendar layout should not be squashed when filters are hidden */
+#calendar-grid {
+  width: 100%;
+  min-width: 0;
+}
+body.filters-off #calendar-area,
+body.filters-off #calendar-grid {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+}
 /* When filters are hidden, calendar must take full width */
 .filters-off #filtersPanel { display: none !important; }
 .filters-off #calendar-area { grid-column: 1 / -1; width: 100%; min-width: 0; }

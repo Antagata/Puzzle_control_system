@@ -1,37 +1,12 @@
 # app.py – slim orchestrator: registers blueprints; keeps engine/status/catalog intact
-from flask import Flask, render_template, request, jsonify, g, send_from_directory
+from flask import Flask, render_template, request, jsonify, g
 from pathlib import Path
 from datetime import datetime, timezone
 from time import time as now_time
 import threading, json, logging, uuid, os
 import pandas as pd
 
-# --- Settings/config (merged from config.py)
-class Settings:
-    # Flask
-    DEBUG = os.getenv("FLASK_DEBUG", "0") == "1"
-    SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
-    MAX_CONTENT_LENGTH = int(os.getenv("MAX_CONTENT_LENGTH", 512 * 1024))  # 512KB JSON posts
-
-    # Default OneDrive base
-    _BASE = Path.home() / "OneDrive - AVU SA" / "AVU CPI Campaign" / "Puzzle_control_Reports"
-
-    # Paths from env with OneDrive fallback
-    AVU_SOURCE_PATH = Path(os.getenv("AVU_SOURCE_PATH", str(_BASE / "SOURCE_FILES")))
-    AVU_OUTPUT_PATH = Path(os.getenv("AVU_OUTPUT_PATH", str(_BASE / "IRON_DATA")))
-
-    # Expose with the names the app expects
-    SOURCE_PATH = AVU_SOURCE_PATH
-    IRON_DATA_PATH = AVU_OUTPUT_PATH
-
-    @staticmethod
-    def missing_path_messages():
-        msgs = []
-        if not Settings.SOURCE_PATH.exists():
-            msgs.append(f"SOURCE path not found: {Settings.SOURCE_PATH}")
-        if not Settings.IRON_DATA_PATH.exists():
-            msgs.append(f"OUTPUT path not found: {Settings.IRON_DATA_PATH}")
-        return msgs
+from config import Settings
 from services.calendar_service import set_engine_ready
 from utils.notebook_runner import run_notebook as nb_run
 from utils.notebook_status import update_status, get_status, Heartbeat
@@ -43,46 +18,18 @@ os.environ.setdefault(
     r"C:\Users\Marco.Africani\OneDrive - AVU SA\AVU CPI Campaign\Puzzle_control_Reports\IRON_DATA"
 )
 
-
-
 # --- Flask app (CREATE ONCE)
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config.from_object(Settings)
 app.config["JSON_AS_ASCII"] = False
 app.config["MAX_CONTENT_LENGTH"] = Settings.MAX_CONTENT_LENGTH
 
-# --- Centralize all config paths (including DATA_DIR)
-BASE_DIR = Path(__file__).resolve().parent
-app.config.update(
-    BASE_DIR=BASE_DIR,
-    DATA_DIR=BASE_DIR / "data",
-    NOTEBOOKS_DIR=BASE_DIR / "notebooks",
-    OUTPUT_DIR=BASE_DIR / "notebooks",
-    TIMEZONE="Europe/Zurich",
-    JSON_SORT_KEYS=False,
-    SEND_FILE_MAX_AGE_DEFAULT=0,
-)
+# --- Campaign history CSV config (AFTER app = Flask(...))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+default_csv = os.path.join(BASE_DIR, "data", "campaign_history.csv")
+app.config["CAMPAIGN_HISTORY_CSV"] = os.environ.get("CAMPAIGN_HISTORY_CSV", default_csv)
 
-# --- Centralized logging (file + console)
-import logging, os
-from logging.handlers import RotatingFileHandler
-def configure_logging(app):
-    os.makedirs("logs", exist_ok=True)
-    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    fh = RotatingFileHandler("logs/app.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
-    fh.setLevel(logging.INFO)
-    fh.setFormatter(fmt)
-    app.logger.addHandler(fh)
-    # also mirror to console
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(fmt)
-    app.logger.addHandler(ch)
-    app.logger.setLevel(logging.INFO)
-configure_logging(app)
-
-
-# --- Paths (DEFINE BEFORE USE)
+# --- Paths
 IRON_DATA_PATH: Path = Settings.IRON_DATA_PATH
 SOURCE_PATH: Path = Settings.SOURCE_PATH
 FILTERS_PATH = Path("notebooks") / "filters.json"
@@ -96,51 +43,8 @@ IRON_DATA_PATH.mkdir(parents=True, exist_ok=True)
 Path("notebooks").mkdir(parents=True, exist_ok=True)
 LOCKED_PATH.mkdir(parents=True, exist_ok=True)
 
-# Expose path for other blueprints
-app.config["IRON_DATA"] = str(IRON_DATA_PATH)
-
-# --- Campaign history CSV config (set ONCE)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-default_csv = os.path.join(BASE_DIR, "data", "campaign_history.csv")
-app.config["CAMPAIGN_HISTORY_CSV"] = os.environ.get("CAMPAIGN_HISTORY_CSV", default_csv)
-
-# --- Favicon (ensure you have static/favicon.ico OR change this to .svg and add that file)
-@app.route('/favicon.ico')
-def favicon():
-    return send_from_directory(app.static_folder, 'favicon.ico', mimetype='image/vnd.microsoft.icon')
-
-
-# --- Blueprint registration (after config is set)
-def register_blueprints(app):
-    from routes.calendar import calendar_bp, calendar_api, notebook_runner_api
-    from routes.filters import filters_bp
-    from routes.cards import cards_bp
-    from routes.campaign_index import campaign_bp
-    from routes.leads import bp as leads_bp
-    app.register_blueprint(calendar_bp)
-    app.register_blueprint(calendar_api, url_prefix="/api/v2")
-    app.register_blueprint(notebook_runner_api)
-    app.register_blueprint(filters_bp)
-    app.register_blueprint(cards_bp)
-    app.register_blueprint(campaign_bp)
-    app.register_blueprint(leads_bp)
-
-register_blueprints(app)
-
 # --- Logging (request ID, duration)
-# --- Logging (request ID, duration)
-
-# JSON error responses
-from flask import jsonify
-
-@app.errorhandler(404)
-def not_found(_):
-    return jsonify({"ok": False, "error": "not found"}), 404
-
-@app.errorhandler(500)
-def server_error(e):
-    app.logger.exception("Unhandled 500")
-    return jsonify({"ok": False, "error": "internal server error"}), 500
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 @app.before_request
 def _req_start():
@@ -157,6 +61,17 @@ def _req_log(resp):
     except Exception:
         pass
     return resp
+
+# --- Blueprints (import AFTER app exists; register ONCE)
+from routes.calendar import calendar_bp
+from routes.filters import filters_bp
+from routes.cards import cards_bp              # optional
+from routes.campaign_index import campaign_bp  # new endpoint
+
+app.register_blueprint(calendar_bp)
+app.register_blueprint(filters_bp)
+app.register_blueprint(cards_bp)               # optional
+app.register_blueprint(campaign_bp)            # /api/campaign_index
 
 # ----------------------------- UI ---------------------------------
 @app.route("/")
@@ -177,24 +92,12 @@ def status():
         progress = int(float(raw_progress)) if isinstance(raw_progress, (int, float, str)) else 0
     except Exception:
         progress = 0
-    # Calculate duration if possible
-    updated_at = data.get("updated_at")
-    started_at = data.get("started_at")
-    duration_sec = None
-    try:
-        if started_at and updated_at:
-            from dateutil.parser import isoparse
-            duration_sec = (isoparse(updated_at) - isoparse(started_at)).total_seconds()
-    except Exception:
-        duration_sec = None
     payload = {
         "notebook": data.get("notebook", ""),
         "state": (data.get("state") or data.get("status") or "idle"),
         "progress": progress,
         "message": data.get("message") or "Waiting…",
         "updated_at": data.get("updated_at") or datetime.now(timezone.utc).isoformat(),
-        "done": bool(data.get("done") or (data.get("state") in {"ok", "completed", "error"})),
-        "duration_sec": duration_sec,
     }
     resp = jsonify(payload)
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -397,37 +300,6 @@ def catalog_search():
     except Exception as e:
         return jsonify({"error": str(e), "items": []}), 200
 
-# ----------------------------- Route Map -----------------------------
-def _print_route_map(app):
-    try:
-        print("\n=== URL MAP ===")
-        with app.app_context():
-            for r in app.url_map.iter_rules():
-                methods = ",".join(sorted(m for m in r.methods if m not in {"HEAD", "OPTIONS"}))
-                print(f"{methods:10} {r.rule:40} -> {r.endpoint}")
-        print("=== END MAP ===\n")
-    except Exception as e:
-        print("Route map print failed:", e)
-
-# ----------------------------- Health Check -----------------------------
-@app.get("/healthz")
-def healthz():
-    return jsonify(ok=True)
-
-@app.get("/routes.json")
-def routes_json():
-    with app.app_context():
-        items = []
-        for r in app.url_map.iter_rules():
-            items.append({
-                "rule": r.rule,
-                "endpoint": r.endpoint,
-                "methods": sorted(m for m in r.methods if m not in {"HEAD","OPTIONS"})
-            })
-    return jsonify(items)
-
 # ----------------------------- Main --------------------------------
-
 if __name__ == "__main__":
-    _print_route_map(app)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(debug=Settings.DEBUG, use_reloader=False)

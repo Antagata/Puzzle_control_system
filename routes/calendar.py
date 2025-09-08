@@ -1,114 +1,36 @@
 # routes/calendar.py
-"""Calendar + notebook endpoints."""
-
 from __future__ import annotations
-
-from flask import Blueprint, request, current_app, jsonify
+from flask import Blueprint, jsonify, request
 from pathlib import Path
 import json, logging
-from server_utils import coerce_week_shape, json_ok, json_error, parse_year_week
 
+from config import Settings
+from utils.schemas import ScheduleValidator, LockedValidator, list_errors
+from services.calendar_service import (
+    clamp_week, load_schedule, default_empty_schedule,
+    is_engine_ready, load_locked_calendar, save_locked_calendar
+)
+from services.cards_service import attach_cards
 
 calendar_bp = Blueprint("calendar_bp", __name__)
-calendar_api = Blueprint("calendar_api", __name__)
-notebook_runner_api = Blueprint("notebook_runner_api", __name__)
 
-# Helper to get config paths at request time
-def _cfg_path(name: str, *parts) -> Path:
-    base = current_app.config[name]
-    return Path(base).joinpath(*parts) if parts else Path(base)
+IRON_DATA_PATH: Path = Settings.IRON_DATA_PATH
+LOCKED_PATH: Path = IRON_DATA_PATH / "locked_weeks"
+LOCKED_PATH.mkdir(parents=True, exist_ok=True)
 
-def _load_json(path, fallback):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return fallback
+DAYS = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+NUM_SLOTS = 5
 
-def _empty_week():
-    return {d: [] for d in ("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")}
+def _nocache(resp):
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
-def _coerce_week_shape(obj):
-    if not isinstance(obj, dict):
-        return _empty_week()
-    out = _empty_week()
-    for k, v in obj.items():
-        if isinstance(v, list):
-            key = str(k).strip().capitalize()
-            if key in out:
-                out[key] = v
-    return out
-
-# --- Thin predictable endpoints ---
-@calendar_api.get("/api/schedule")
-def api_schedule():
-    try:
-        year, week = parse_year_week()
-        path = _cfg_path("IRON_DATA_PATH", "weekly_campaign_schedule.json")
-        data = {}
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception as e:
-                logging.exception("Failed to read schedule JSON: %s", e)
-        wk = data.get("weekly_calendar") if isinstance(data, dict) else data
-        return json_ok({"weekly_calendar": coerce_week_shape(wk)}, year=year, week=week)
-    except FileNotFoundError:
-        return json_ok({"weekly_calendar": coerce_week_shape(None)})
-    except Exception as e:
-        return json_error(f"schedule failed: {e}", status=500)
-
-@calendar_api.get("/api/locked")
-def api_locked():
-    year = request.args.get("year", type=int)
-    week = request.args.get("week", type=int)
-    data = _load_json(_cfg_path("NOTEBOOKS_DIR", "locked_calendar.json"), {"locked_calendar": {}})
-    return jsonify(data)
-
-@calendar_bp.get("/api/schedule")
-def get_schedule():
-    year = request.args.get("year", type=int)
-    week = request.args.get("week", type=int)
-
-    # Defensive: always validate input
-    if not year or not (1 <= (week or 0) <= 53):
-        return jsonify({
-            "ok": False,
-            "weekly_calendar": _empty_week(),
-            "error": "invalid year/week"
-        }), 200
-
-    try:
-        data_dir = Path(current_app.config["DATA_DIR"])
-        fname = data_dir / f"schedule_{year}_W{week}.json"
-
-        if not fname.exists():
-            return jsonify({
-                "ok": True,
-                "weekly_calendar": _empty_week(),
-                "year": year,
-                "week": week
-            }), 200
-
-        with fname.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-        wk = raw.get("weekly_calendar", raw)
-        return jsonify({
-            "ok": True,
-            "weekly_calendar": _coerce_week(wk),
-            "year": year,
-            "week": week
-        }), 200
-
-    except Exception as e:
-        current_app.logger.exception("get_schedule failed")
-        return jsonify({
-            "ok": False,
-            "weekly_calendar": _empty_week(),
-            "error": str(e),
-            "year": year,
-            "week": week
-        }), 200
+def _ensure_five_slots(payload: dict) -> dict:
+    """Pad/truncate each day list to exactly 5 slots to satisfy UI/validator."""
+    fixed = {}
+    for d in DAYS:
+        lst = list(payload.get(d, []))
         if len(lst) < NUM_SLOTS:
             lst = lst + [None] * (NUM_SLOTS - len(lst))
         elif len(lst) > NUM_SLOTS:
@@ -145,32 +67,48 @@ def save_locked():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-## Removed duplicate get_schedule endpoint (was causing AssertionError)
+@calendar_bp.get("/api/schedule")
+def get_schedule():
+    # Accept ?week= and ignore ?year= for now (UI sends both)
+    week_arg = request.args.get("week")
+    week = clamp_week(week_arg) if week_arg else None
+
+    schedule = load_schedule(IRON_DATA_PATH, week)
+    if schedule is None:
+        payload = default_empty_schedule()
+        return _nocache(jsonify(payload))
+
+    # Normalize to 5 slots/day BEFORE validation, then validate
+    schedule_fixed = _ensure_five_slots(schedule)
+    errs = list_errors(ScheduleValidator, schedule_fixed)
     if errs:
         logging.warning("schedule validation failed: %s", errs)
         payload = default_empty_schedule()
     else:
+        # Attach UI-friendly 'card' objects per slot, non-destructively
         payload = attach_cards(schedule_fixed)
 
     return _nocache(jsonify(payload))
-# --- Notebook runner endpoints ---
-notebook_runner_api = Blueprint("notebook_runner_api", __name__)
 
-@notebook_runner_api.post("/api/run-notebook")
-def run_notebook():
-    payload = request.get_json(force=True) or {}
-    notebook = payload.get("notebook")
-    year = payload.get("year")
-    week = payload.get("week")
-    filters = payload.get("filters", {})
-    # Call your actual runner; here stub a fake job id
-    job_id = "job-" + str(week)
-    # TODO: trigger utils.notebook_runner.run_async(notebook, year, week, filters)
-    return jsonify({"job_id": job_id})
+@calendar_bp.get("/api/leads")
+def get_leads():
+    week = request.args.get("week")
+    path = IRON_DATA_PATH / (f"leads_campaigns_week_{clamp_week(week)}.json" if week else "leads_campaigns.json")
+    if not path.exists():
+        return _nocache(jsonify({"TueWed": [], "ThuFri": []}))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"TueWed": [], "ThuFri": []}
+    return _nocache(jsonify(data))
 
-@notebook_runner_api.get("/api/status")
-def job_status():
-    job_id = request.args.get("job_id")
-    # TODO: read real status from utils/notebook_status.py
-    # Stub: pretend it's done
-    return jsonify({"state": "completed"})
+@calendar_bp.get("/api/campaign_index")
+def campaign_index_stub():
+    # Quiet stub so the UI doesn't 404; extend later as needed.
+    return _nocache(jsonify({
+        "items": [],
+        "meta": {
+            "year": request.args.get("year"),
+            "week": request.args.get("week")
+        }
+    }))

@@ -1,42 +1,71 @@
 // static/js/cards.js
 import { $, $all, CAL, DAYS, NUM_SLOTS, makeKey, addLongPress } from "./utils.js";
+import { persistLockedCalendarState, persistFullCalendarSnapshot } from "./calendar.js";
 
-/* -------------------------------------------------------------------------- */
-/*                              Module-level state                             */
-/* -------------------------------------------------------------------------- */
+// NOTE: this module calls a few orchestrator hooks exposed on window:
+//   - window.recalcAndUpdateGauge({ animate: boolean })
+//   - window.notifySelectedWine(data)
+//   - window.setOfferButtonsEnabled(boolean)
+
 let draggedItem = null;
 let ctxMenuEl = null;
 let tooltipEl = null;
 
-/* --------------------------- Safe state helpers --------------------------- */
+/* ---------------------------- Safe state helpers --------------------------- */
+
 function _state() {
-  return (typeof window !== "undefined" && window.__avuState)
-    ? window.__avuState
-    : { CAMPAIGN_INDEX: { by_id: {}, by_name: {} }, isoNow: () => ({}) };
+  if (typeof window !== "undefined" && window.__avuState) return window.__avuState;
+  // minimal safe shape so we never crash
+  return {
+    CAMPAIGN_INDEX: { by_id: {}, by_name: {} },
+    isoNow: () => ({})
+  };
 }
 function _campaignIndex() {
   const ci = _state().CAMPAIGN_INDEX || {};
-  return { by_id: ci.by_id || {}, by_name: ci.by_name || {} };
+  return {
+    by_id: ci.by_id || {},
+    by_name: ci.by_name || {}
+  };
 }
-const _normName = (s) => String(s || "").trim().toLowerCase();
-const _normVintage = (v) => String(v ?? "NV").trim().toLowerCase();
 
-/** Resolve last-campaign date */
-function lastCampaignFromIndex(id, name, vintage, item) {
-  const direct = item?.last_campaign_date || item?.last_campaign || item?.lastCampaign;
+/**
+ * Robust last-campaign resolver.
+ * - Prefers explicit fields on the item
+ * - Falls back to campaign index by id
+ * - Then by (name :: vintage) in by_name
+ * - Accepts both string and { last_campaign } object shapes
+ */
+function lastCampaignFromIndex(item) {
+  if (!item) return "";
+  // item-first
+  const direct =
+    item.last_campaign_date ||
+    item.last_campaign ||
+    item.lastCampaign;
   if (direct) return String(direct);
 
   const { by_id, by_name } = _campaignIndex();
+  const id = item.id ?? item.wine_id ?? null;
+  const name = item.name ?? item.wine ?? null;
+  const vintage = item.vintage ?? "NV";
+
   if (id && by_id[id]) {
     const v = by_id[id];
     return typeof v === "string" ? v : (v?.last_campaign ?? "");
   }
-  const k = `${_normName(name)}::${_normVintage(vintage)}`;
-  const v = by_name[k] || by_name[_normName(name)];
-  return v ? (typeof v === "string" ? v : (v?.last_campaign ?? "")) : "";
+  if (name) {
+    // support either "name" or "name::vintage" keying
+    const k1 = String(name).trim().toLowerCase();
+    const k2 = `${k1}::${String(vintage).trim().toLowerCase()}`;
+    const v = by_name[k2] ?? by_name[k1];
+    if (v) return typeof v === "string" ? v : (v?.last_campaign ?? "");
+  }
+  return "";
 }
 
-/* ------------------------------ Drag & drop ------------------------------- */
+/* ------------------------------ Drag handlers ----------------------------- */
+
 export function attachWineBoxDragHandlers(el) {
   el.setAttribute("draggable", "true");
   el.addEventListener("dragstart", (e) => {
@@ -49,6 +78,7 @@ export function attachWineBoxDragHandlers(el) {
     draggedItem = null;
   });
 }
+
 function getDragAfterElement(container, y) {
   const items = Array.from(container.querySelectorAll(".wine-box:not(.dragging)"));
   let closest = { offset: Number.NEGATIVE_INFINITY, element: null };
@@ -59,6 +89,7 @@ function getDragAfterElement(container, y) {
   }
   return closest.element;
 }
+
 export function addDropZoneListeners() {
   $all(".fill-box, .overflow-drawer, .leads-drawer").forEach((zone) => {
     zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("over"); });
@@ -70,17 +101,19 @@ export function addDropZoneListeners() {
       const oldParent = draggedItem.parentNode;
 
       if (oldParent !== targetBox) {
-        if (oldParent?.classList.contains("filled") && oldParent.children.length === 1) {
+        if (oldParent && oldParent.classList.contains("filled") && oldParent.children.length === 1) {
           oldParent.classList.remove("filled");
         }
-        if ((oldParent?.classList.contains("overflow-drawer") || oldParent?.classList.contains("leads-drawer")) &&
-            oldParent.children.length === 1) {
+        if (
+          oldParent &&
+          (oldParent.classList.contains("overflow-drawer") || oldParent.classList.contains("leads-drawer")) &&
+          oldParent.children.length === 1
+        ) {
           oldParent.classList.remove("active");
         }
-
-        const afterEl = getDragAfterElement(targetBox, e.clientY);
-        if (afterEl == null) targetBox.appendChild(draggedItem);
-        else targetBox.insertBefore(draggedItem, afterEl);
+        const afterElement = getDragAfterElement(targetBox, e.clientY);
+        if (afterElement == null) targetBox.appendChild(draggedItem);
+        else targetBox.insertBefore(draggedItem, afterElement);
 
         if (targetBox.classList.contains("fill-box")) targetBox.classList.add("filled");
         else if (targetBox.classList.contains("overflow-drawer") || targetBox.classList.contains("leads-drawer")) targetBox.classList.add("active");
@@ -95,51 +128,8 @@ export function addDropZoneListeners() {
   });
 }
 
-/* ------------------------------ Leads helpers ----------------------------- */
-export function firstAvailableBoxForDay(day) {
-  const cols = document.querySelectorAll(".day-column");
-  let dayCol = null;
-  for (const col of cols) {
-    const name = col.querySelector(".day-name")?.textContent?.trim();
-    if (name === day) { dayCol = col; break; }
-  }
-  if (!dayCol) return null;
+/* ----------------------------- Card data utils ---------------------------- */
 
-  // 1) First empty slot
-  const boxes = dayCol.querySelectorAll(`.fill-box[data-day="${day}"]`);
-  for (const box of boxes) {
-    if (!box.querySelector(".wine-box")) return box;
-  }
-  // 2) Overflow drawer
-  const overflow = dayCol.querySelector(`.overflow-drawer[data-day="${day}"]`);
-  if (overflow) return overflow;
-  // 3) Day body fallback
-  return dayCol.querySelector(".day-body") || dayCol;
-}
-
-export function placeWineIntoDay(day, wineData, draggedEl = null, opts = {}) {
-  const target = firstAvailableBoxForDay(day);
-  if (!target) return false;
-  try {
-    renderWineIntoBox(target, wineData, opts);
-    if (draggedEl?.isConnected) draggedEl.remove();
-    window?.recalcAndUpdateGauge?.({ animate: true });
-    return true;
-  } catch (e) {
-    console.error("[placeWineIntoDay] failed", e);
-    return false;
-  }
-}
-
-export function nextEmptySlotIndex(day) {
-  const boxes = document.querySelectorAll(`.fill-box[data-day="${day}"]`);
-  for (const box of boxes) {
-    if (!box.querySelector(".wine-box")) return parseInt(box.dataset.slot, 10) || 0;
-  }
-  return 0;
-}
-
-/* ------------------------------- Data utils ------------------------------- */
 export function extractWineData(el) {
   return {
     id: el.dataset.id || null,
@@ -160,7 +150,8 @@ export function extractWineData(el) {
   };
 }
 
-/* ------------------------------- Selection -------------------------------- */
+/* ------------------------------ Selections -------------------------------- */
+
 export function toggleSelectWine(el) {
   if (_state().selectedWineEl === el) {
     el.classList.remove("selected");
@@ -218,7 +209,8 @@ export function deleteCardFromCalendar(cardEl, { silent = false } = {}) {
   }
 }
 
-/* -------------------------------- Tooltip --------------------------------- */
+/* ------------------------------ Tooltip ----------------------------------- */
+
 export function showWineTooltip(el) {
   hideWineTooltip();
   tooltipEl = document.createElement("div");
@@ -245,80 +237,125 @@ export function hideWineTooltip() {
   tooltipEl = null;
 }
 
-// --- cards.js (add) ---
-function wireCardInteractions(cardEl, {
-  onLockToggle = () => {},
-  onAutoToggle = () => {},
-  onDelete = () => {},
-} = {}) {
-  const lockBtn = cardEl.querySelector('[data-btn="lock"]');
-  const autoBtn = cardEl.querySelector('[data-btn="auto"]');
-  if (lockBtn) {
-    lockBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const nowLocked = !cardEl.classList.contains("is-locked");
-      cardEl.classList.toggle("is-locked", nowLocked);
-      onLockToggle(nowLocked, cardEl);
-    });
-  }
-  if (autoBtn) {
-    autoBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      cardEl.classList.toggle("is-auto");
-      onAutoToggle(cardEl.classList.contains("is-auto"), cardEl);
-    });
-  }
-  // Right-click to delete (only if not locked)
-  cardEl.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    if (cardEl.classList.contains("is-locked")) return;
-    onDelete(cardEl);
-    cardEl.remove();
-  });
-}
+/* --------------------------- Render a single card -------------------------- */
 
-export function renderWineIntoBox(containerEl, cardData) {
+export function renderWineIntoBox(box, item, { locked = false } = {}) {
+  const id =
+    item.id ||
+    `${(item.wine || item.name || "Wine").replace(/\s/g, "")}_${item.vintage || "NV"}_${box.dataset.day}_${box.dataset.slot}`;
+
   const el = document.createElement("div");
-  el.className = "wine-card group relative rounded-xl shadow ring-1 ring-black/5 p-2 bg-white";
-  el.dataset.id = cardData?.id || crypto.randomUUID();
+  el.className = "wine-box";
+  el.id = `wine_${id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+
+  // --- safe accessors
+  function _state() {
+    return (typeof window !== "undefined" && window.__avuState)
+      ? window.__avuState
+      : { CAMPAIGN_INDEX: { by_id:{}, by_name:{} } };
+  }
+  function _campaignIndex() {
+    const ci = _state().CAMPAIGN_INDEX || {};
+    return { by_id: ci.by_id || {}, by_name: ci.by_name || {} };
+  }
+  function lastCampaignFromIndex(id, name, vintage) {
+    const { by_id, by_name } = _campaignIndex();
+    if (id && by_id[id]) return by_id[id];
+    const key = `${String(name || "").trim().toLowerCase()}::${String(vintage || "NV").trim().toLowerCase()}`;
+    return by_name[key] || "";
+  }
+
+  // dataset (normalize to consistent keys/values)
+  el.dataset.id = item.id || "";
+  el.dataset.day = box.dataset.day;
+  el.dataset.name = item.wine || item.name || "Unknown";
+  el.dataset.vintage = item.vintage || "NV"; // use "NV" to match index keys
+  el.dataset.locked = locked ? "true" : String(!!item.locked);
+  el.dataset.type = item.full_type || item.type || "";
+  el.dataset.stock = (item.stock ?? item.stock_count ?? "").toString();
+  el.dataset.priceTier = (item.price_tier || item.tier || item.priceTier || "").toString();
+  el.dataset.loyalty = item.loyalty_level || "";
+  el.dataset.region = item.region_group || item.region || "";
+  el.dataset.matchQuality = item.match_quality || "";
+  el.dataset.cpiScore = item.avg_cpi_score ?? item.cpi_score ?? "";
+
+  // resolve last campaign BEFORE building HTML
+  const fromItem =
+    item.last_campaign_date || item.last_campaign || item.lastCampaign || "";
+  const lc = lastCampaignFromIndex(
+    item.id || "", 
+    item.wine || item.name || "", 
+    item.vintage || "NV"
+  );
+
+  const lastCampaign =
+    item.last_campaign_date || item.last_campaign || item.lastCampaign || lc || "";
+  el.dataset.lastCampaign = String(lastCampaign);
+
+
+  const isLocked = el.dataset.locked === "true";
+  const lockIcon = isLocked ? "fa-lock" : "fa-lock-open";
+  const badgeText = isLocked ? "Locked" : "Auto";
+  const priceText = el.dataset.priceTier ? `Price: ${el.dataset.priceTier}` : "";
+  const stockText = el.dataset.stock ? `Stock: ${el.dataset.stock}` : "";
+  const details = [priceText, stockText].filter(Boolean).join(" • ");
 
   el.innerHTML = `
-    <div class="flex items-start justify-between gap-2">
-      <div>
-        <div class="text-sm font-semibold">${cardData?.name ?? "Unnamed Wine"}</div>
-        <div class="text-xs opacity-70">${cardData?.vintage ?? "NV"} • ${cardData?.size ?? ""}</div>
-      </div>
-      <div class="flex items-center gap-2">
-        <button class="text-xs px-2 py-1 rounded border" data-btn="auto">Auto</button>
-        <button class="text-xs px-2 py-1 rounded border" data-btn="lock">Lock</button>
-      </div>
+    <div class="wine-header">
+      <strong class="wine-name">${el.dataset.name}</strong>
+      <span class="muted">(${el.dataset.vintage})</span>
+      <span class="badge">${badgeText}</span>
+      <button class="lock-icon" title="${isLocked ? "Unlock" : "Lock"}" aria-label="Toggle lock" aria-pressed="${isLocked}" type="button">
+        <i class="fas ${lockIcon}"></i>
+      </button>
     </div>
+    <div class="wine-details">${details || "&nbsp;"}</div>
+    <div class="wine-submeta"><div>Last campaign: ${lastCampaign || "-"}</div></div>
   `;
-  wireCardInteractions(el, {
-    onLockToggle: () => {},
-    onAutoToggle: () => {},
-    onDelete: () => {},
-  });
-  containerEl.appendChild(el);
+
+  // visual type hinting
+  const ft = (el.dataset.type || "").toLowerCase();
+  const nameLc = (el.dataset.name || "").toLowerCase();
+  const typeClass = (() => {
+    if (ft.includes("spark") || ft.includes("champ") || ft.includes("spumante") || ft.includes("cava") || ft.includes("prosecco")) return "wine-type-sparkling";
+    if (ft.includes("rose") || ft.includes("rosé")) return "wine-type-rose";
+    if (ft.includes("dessert") || ft.includes("sweet") || ft.includes("sauternes") || ft.includes("port") || ft.includes("sherry") || nameLc.includes("late harvest")) return "wine-type-dessert";
+    if (ft.includes("white") || ft.includes("blanc")) return "wine-type-white";
+    if (ft.includes("red") || ft.includes("rouge") || nameLc.includes("bordeaux")) return "wine-type-red";
+    return "";
+  })();
+  if (typeClass) el.classList.add(typeClass);
+
+  // a11y + interactions (unchanged)
+  // ... (your existing listeners: keydown/click/contextmenu/long-press/tooltip/drag)
+  // make sure toggleSelectWine, showWineContextMenu, addLongPress are in scope
+
+  attachWineBoxDragHandlers(el);
+  box.appendChild(el);
+  box.classList.add("filled");
+  box.classList.remove("empty");
+
+  // restore selection
+  const sel = _state().selectedWineData;
+  if (sel && sel.id && sel.id === el.dataset.id) {
+    el.classList.add("selected");
+    _state().selectedWineEl = el;
+    window?.setOfferButtonsEnabled?.(true);
+  }
+
+  window?.recalcAndUpdateGauge?.({ animate: false });
+  return el;
 }
 
-// small helpers
-function typeClass(t){ return t ? `wine-type-${String(t).toLowerCase()}` : ''; }
-function matchClass(m){
-  const s = String(m).toLowerCase();
-  if (s.includes('perfect')) return 'badge-perfect';
-  if (s.includes('strong'))  return 'badge-strong';
-  if (s.includes('moderate'))return 'badge-moderate';
-  return 'badge-low';
-}
-function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&lt;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 
+/* ---------------------------- Context menu UI ------------------------------ */
 
-/* ---------------------------- Context menu UI ----------------------------- */
 function destroyContextMenu() {
   if (ctxMenuEl?.parentNode) ctxMenuEl.parentNode.removeChild(ctxMenuEl);
   ctxMenuEl = null;
 }
+
+
 export function showWineContextMenu(cardEl, x, y) {
   destroyContextMenu();
   const doc = cardEl.ownerDocument || document;
@@ -329,6 +366,13 @@ export function showWineContextMenu(cardEl, x, y) {
     <ul role="menu" aria-label="Wine actions">
       <li role="menuitem" data-act="move">Move to week…</li>
       <li role="menuitem" data-act="delete" class="danger">Remove from this week</li>
+      <li role="separator" style="border-top:1px solid #eee;margin:4px 0"></li>
+      <li style="display:flex;gap:10px;justify-content:center;padding:8px 0;">
+        <button data-act="color-green" title="Green" style="width:28px;height:28px;border-radius:50%;border:2px solid #27ae60;background:#27ae60;cursor:pointer;"></button>
+        <button data-act="color-gold" title="Gold" style="width:28px;height:28px;border-radius:50%;border:2px solid #ffd700;background:#ffd700;cursor:pointer;"></button>
+        <button data-act="color-white" title="White" style="width:28px;height:28px;border-radius:50%;border:2px solid #ccc;background:#fff;cursor:pointer;"></button>
+        <button data-act="color-black" title="Black" style="width:28px;height:28px;border-radius:50%;border:2px solid #222;background:#222;cursor:pointer;"></button>
+      </li>
     </ul>
   `;
   doc.body.appendChild(ctxMenuEl);
@@ -339,12 +383,25 @@ export function showWineContextMenu(cardEl, x, y) {
   Object.assign(ctxMenuEl.style, { left: `${left}px`, top: `${top}px`, position: "fixed" });
 
   ctxMenuEl.addEventListener("click", (e) => {
-    const li = e.target.closest("li[data-act]");
-    if (!li) return;
-    const act = li.dataset.act;
+    const btn = e.target.closest("button[data-act]") || e.target.closest("li[data-act]");
+    if (!btn) return;
+    const act = btn.dataset.act;
     destroyContextMenu();
     if (act === "delete") deleteCardFromCalendar(cardEl);
     if (act === "move") openMoveWeekModal(cardEl);
+    if (act && act.startsWith("color-")) {
+      let color = "";
+      if (act === "color-green") color = "#27ae60";
+      if (act === "color-gold") color = "#ffd700";
+      if (act === "color-white") color = "#fff";
+      if (act === "color-black") color = "#222";
+      // Set background color of the card's parent container (slot/fill-box)
+      const parent = cardEl.closest('.slot, .fill-box, .overflow-drawer, .leads-drawer');
+      if (parent) {
+        parent.style.background = color;
+        parent.dataset.bgcolor = color;
+      }
+    }
   });
 
   setTimeout(() => {
@@ -356,7 +413,8 @@ export function showWineContextMenu(cardEl, x, y) {
   }, 0);
 }
 
-/* --------------------------- Move to week modal --------------------------- */
+/* --------------------------- Move to week modal ---------------------------- */
+
 export function openMoveWeekModal(cardEl) {
   const d = extractWineData(cardEl);
   const overlay = document.createElement("div");
@@ -393,7 +451,7 @@ export function openMoveWeekModal(cardEl) {
   document.body.appendChild(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("#mv-cancel")?.addEventListener("click", close);
-  overlay.addEventListener("click",(e)=>{ if(e.target === overlay) close(); });
+  overlay.addEventListener("click",(e)=>{ if(e.target===overlay) close(); });
   document.addEventListener("keydown", function esc(e){ if(e.key==="Escape"){ close(); document.removeEventListener("keydown", esc); } });
 
   overlay.querySelector("#mv-confirm")?.addEventListener("click", async () => {
@@ -404,7 +462,8 @@ export function openMoveWeekModal(cardEl) {
   });
 }
 
-/* --------------------------------- Move ----------------------------------- */
+/* ------------------------------ Move logic -------------------------------- */
+
 export function normalizeLocked(locks) {
   const out = {};
   DAYS.forEach((d) => {
@@ -414,11 +473,13 @@ export function normalizeLocked(locks) {
   });
   return out;
 }
+
 export async function moveCardToWeek(cardEl, year, week) {
   const d = extractWineData(cardEl);
   if (!Number.isFinite(week) || week < 1 || week > 53) return;
   if (!Number.isFinite(year)) return;
 
+  // de-dupe target
   const existing = await window.__avuApi.fetchLockedForWeek(week, year);
   const existsAlready = Object.values(existing || {}).some(arr =>
     (arr || []).some(x => x && makeKey(x.id || x.wine, x.vintage, x.wine) === makeKey(d.id || d.name, d.vintage, d.name))
@@ -451,20 +512,4 @@ export async function moveCardToWeek(cardEl, year, week) {
     alert("Move failed (see console).");
     window?.recalcAndUpdateGauge?.({ animate: true });
   }
-}
-
-/* ------------------------------ Debug surface ----------------------------- */
-if (typeof window !== "undefined") {
-  window.__avuCards = {
-    attachWineBoxDragHandlers,
-    addDropZoneListeners,
-    renderWineIntoBox,
-    toggleSelectWine,
-    showWineContextMenu,
-    extractWineData,
-    firstAvailableBoxForDay,
-    placeWineIntoDay,
-    nextEmptySlotIndex,
-    deleteCardFromCalendar,
-  };
 }

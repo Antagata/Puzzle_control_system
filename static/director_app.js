@@ -1,9 +1,9 @@
 // static/director_app.js
 // Cache-buster beacon: confirm you're seeing this exact line on reload.
-console.log("[AVU] director_app sweep v2");
+console.log("[AVU] director_app sweep v3 +v20250908c");
 
 // ---------- Canonical imports (ESM only; no globals) ----------
-import * as U from "./js/utils.js";
+import * as U from "./js/utils.js?v=20250908c";
 import {
   buildCalendarSkeleton,
   clearCalendar,
@@ -11,10 +11,14 @@ import {
   renderDefaultScheduleFromData,
   loadFullCalendarSnapshot,
   wireCalendarDelegation,
-} from "./js/calendar.js";
-import * as Filters from "./js/filters.js";
-import * as Cards from "./js/cards.js";
-import { ensureLeadsLanes } from "./js/leads.js";
+} from "./js/calendar.js?v=20250908c";
+import {
+  renderWineIntoBox,
+  addDropZoneListeners,
+  wireCardInteractions,
+} from "./js/cards.js?v=20250908c";
+import { ensureLeadsLanes } from "./js/leads.js?v=20250908c";
+// Remove all global Calendar.*, Cards.*, Filters.* usage; use direct imports above
 
 // Always use namespaced utils: U.$, U.$all, U.getJSON, etc.
 const { URLS, isoNowEurope } = U;
@@ -115,20 +119,34 @@ function ensureFiltersToggle() {
       setFiltersVisible(next);
     });
   }
-  // Default OFF on first load
-  if (localStorage.getItem(FILTERS_VISIBLE_KEY) == null) {
-    setFiltersVisible(false);
-  } else {
-    setFiltersVisible(loadFiltersVisible());
-  }
+  // Always hide filters on app start
+  setFiltersVisible(false);
 }
 
 // ---------- UI wiring ----------
 function wireWeekSelector() {
   const sel = U.$("#weekSelector");
-  if (!sel) return;
+  if (!sel) {
+    console.warn("[weekSelector] #weekSelector not found in DOM");
+    return;
+  }
 
+  // Populate week options for current year
+  const { year: currentYear, week: currentWeek } = App.getYearWeek();
+  const weeksInYear = 53; // ISO weeks can go up to 53
+  let options = "";
+  for (let y = currentYear - 1; y <= currentYear + 1; ++y) {
+    for (let w = 1; w <= weeksInYear; ++w) {
+      const label = `${y} - Week ${w}`;
+      const value = `${y}-W${w.toString().padStart(2, "0")}`;
+      const selected = (y === currentYear && w === currentWeek) ? "selected" : "";
+      options += `<option value="${value}" ${selected}>${label}</option>`;
+    }
+  }
+  sel.innerHTML = options;
   sel.disabled = false;
+  console.log("[weekSelector] Populated weekSelector with options", sel.options.length);
+
   sel.addEventListener("change", async (e) => {
     const val = String(e.target.value);
     const m = val.match(/(\d{4})-W?(\d{1,2})/);
@@ -139,6 +157,8 @@ function wireWeekSelector() {
     App.setYearWeek(year, week);
     clearCalendar();
     buildCalendarSkeleton();
+    // (DnD listeners are added inside buildCalendarSkeleton, but if you
+    // rebuild elsewhere, make sure to call it before painting.)
     await handleWeekYearChange(year, week);
   });
 }
@@ -155,8 +175,10 @@ function wireStartButton() {
       await fetch(runUrl, { method: "POST" });
       await pollStatusUntilDone(120_000);
       const { year, week } = App.getYearWeek();
-      clearCalendar();
-      buildCalendarSkeleton();
+  clearCalendar();
+  buildCalendarSkeleton();
+  // (DnD listeners are added inside buildCalendarSkeleton, but if you
+  // rebuild elsewhere, make sure to call it before painting.)
       await handleWeekYearChange(year, week);
     } catch (e) {
       console.error("[engine] start failed", e);
@@ -198,6 +220,8 @@ async function boot() {
 
   // 4) build skeleton
   buildCalendarSkeleton();
+  // (DnD listeners are added inside buildCalendarSkeleton, but if you
+  // rebuild elsewhere, make sure to call it before painting.)
 
   // 5) instant paint from snapshot (if any)
   const { year, week } = App.getYearWeek();
@@ -217,7 +241,18 @@ async function boot() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  boot().catch(e => console.error("[boot] crashed", e));
+  const debugDiv = document.createElement('div');
+  debugDiv.id = 'avu-debug-overlay';
+  debugDiv.style = 'position:fixed;top:0;left:0;z-index:9999;background:rgba(0,0,0,0.85);color:#fff;padding:8px 16px;font-size:14px;font-family:monospace;max-width:100vw;white-space:pre;pointer-events:none;';
+  debugDiv.textContent = '[AVU] Booting...';
+  document.body.appendChild(debugDiv);
+  boot().then(() => {
+    debugDiv.textContent = '[AVU] Boot complete.';
+    setTimeout(() => debugDiv.remove(), 2000);
+  }).catch(e => {
+    debugDiv.textContent = '[boot] crashed: ' + (e && e.stack ? e.stack : e);
+    console.error("[boot] crashed", e);
+  });
 });
 
 // ---------- OPTIONAL legacy hooks (kept in one documented place) ----------
@@ -228,8 +263,10 @@ Object.defineProperty(window, "AVU", {
     getState: () => ({ ...App }),
     rebuild: async () => {
       const { year, week } = App.getYearWeek();
-      clearCalendar();
-      buildCalendarSkeleton();
+  clearCalendar();
+  buildCalendarSkeleton();
+  // (DnD listeners are added inside buildCalendarSkeleton, but if you
+  // rebuild elsewhere, make sure to call it before painting.)
       await handleWeekYearChange(year, week);
     },
   },
