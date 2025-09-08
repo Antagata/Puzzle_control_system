@@ -16,10 +16,12 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
     rel="stylesheet"
   />
+
   <link
     rel="stylesheet"
     href="{{ url_for('static', filename='style.css') }}?v={{ app_version|default(1) }}"
   />
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
 
   <!-- Small extras only for gauge labels (main look lives in style.css) -->
   <style>
@@ -44,6 +46,7 @@
   {% endif %}
 
   <div class="cockpit-container" role="main">
+    <div id="filtersPanel" class="filters" style="display:none"></div>
     <header class="cockpit-header">
       <h1>AVU puzzle control</h1>
       <p>Navigate through client recommendations with precision. Adjust filters to find the perfect match!</p>

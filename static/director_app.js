@@ -124,6 +124,16 @@ function ensureFiltersToggle() {
 }
 
 // ---------- UI wiring ----------
+function getWeeksInYear(year) {
+  // Returns the ISO week count for a given year
+  const d = new Date(year, 11, 31);
+  const week = ((d.getDay() === 4) || (d.getDay() === 3 && isLeapYear(year))) ? 53 : 52;
+  return week;
+}
+function isLeapYear(year) {
+  return (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+}
+
 function wireWeekSelector() {
   const sel = U.$("#weekSelector");
   if (!sel) {
@@ -131,12 +141,12 @@ function wireWeekSelector() {
     return;
   }
 
-  // Populate week options for current year
+  // Populate week options for current, previous, and next year
   const { year: currentYear, week: currentWeek } = App.getYearWeek();
-  const weeksInYear = 53; // ISO weeks can go up to 53
   let options = "";
   for (let y = currentYear - 1; y <= currentYear + 1; ++y) {
-    for (let w = 1; w <= weeksInYear; ++w) {
+    const maxWeeks = getWeeksInYear(y);
+    for (let w = 1; w <= maxWeeks; ++w) {
       const label = `${y} - Week ${w}`;
       const value = `${y}-W${w.toString().padStart(2, "0")}`;
       const selected = (y === currentYear && w === currentWeek) ? "selected" : "";
