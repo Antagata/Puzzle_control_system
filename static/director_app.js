@@ -1,17 +1,163 @@
-// top of director_app.js
-import { $, $all, URLS, isoNowEurope, getJSON, postJSON } from "./js/utils.js";
-import * as Filters from "./js/filters.js";
-import * as Leads   from "./js/leads.js";
-import * as Cards   from "./js/cards.js";
-import * as Calendar from "./js/calendar.js";
-
-
+import * as U from "./js/utils.js";
 import {
-  __api,
   buildCalendarSkeleton,
-  wireCalendarDelegation,
-  handleWeekYearChange,      // <- use this; do NOT import handleWeekChange here
+  handleWeekYearChange,
+  renderDefaultScheduleFromData,
+  loadFullCalendarSnapshot,
 } from "./js/calendar.js";
+import * as Filters from "./js/filters.js";
+import * as Cards from "./js/cards.js";
+
+// Use namespaced utils to avoid "$" collisions:
+// - U.$, U.$all, U.getJSON, U.postJSON, U.CAL, U.URLS, etc.
+const { CAL, URLS } = U;
+
+// ---------- Filters toggle (persisted) ----------
+const FILTERS_VISIBLE_KEY = "ui:filters:visible";
+
+function findFiltersPanel() {
+  // Try common selectors; adjust if your filters container has a known id
+  return (
+    U.$("#filtersPanel") ||
+    U.$("#filters") ||
+    U.$(".filters") ||
+    U.$('[data-role="filters"]')
+  );
+}
+
+function loadFiltersVisible() {
+  return localStorage.getItem(FILTERS_VISIBLE_KEY) === "true";
+}
+
+function setFiltersVisible(visible) {
+  localStorage.setItem(FILTERS_VISIBLE_KEY, String(visible));
+  const panel = findFiltersPanel();
+  if (panel) panel.classList.toggle("hidden", !visible);
+
+  // NEW: flip layout classes so calendar spans full width
+  const layout = U.$("#appLayout")
+              || U.$('[data-role="layout"]')
+              || U.$(".app-layout");
+  const calendarArea = U.$("#calendar-area")
+                     || U.$("#calendar-grid")?.parentElement;
+
+  // Add a body flag for CSS overrides
+  document.body.classList.toggle("filters-on",  visible);
+  document.body.classList.toggle("filters-off", !visible);
+
+  // If your layout is a CSS grid with 2 columns, collapse to 1 when filters are hidden
+  if (layout) {
+    layout.classList.toggle("grid", true);
+    // remove any fixed 2-col classes you might have set elsewhere
+    layout.classList.toggle("grid-cols-1", !visible);
+    layout.classList.toggle("grid-cols-[320px_1fr]", visible); // Tailwind arbitrary value; OK with CDN
+  }
+
+  // Force the calendar region to occupy all columns when filters are off
+  if (calendarArea) {
+    if (!visible) {
+      calendarArea.style.gridColumn = "1 / -1";
+      calendarArea.style.width = "100%";
+      calendarArea.style.minWidth = "0";
+    } else {
+      calendarArea.style.gridColumn = "";
+      calendarArea.style.width = "";
+      calendarArea.style.minWidth = "";
+    }
+  }
+
+  const btn = U.$("#filtersToggle");
+  if (btn) {
+    btn.setAttribute("aria-pressed", String(visible));
+    // optional little UI cue
+    btn.querySelector('[data-role="knob"]')?.classList.toggle("translate-x-5", visible);
+  }
+}
+
+function ensureFiltersToggle() {
+  // Place the toggle in a sensible toolbar spot, falling back to before the calendar grid
+  const host =
+    U.$("#calendar-controls") ||
+    U.$("#controls") ||
+    U.$(".toolbar") ||
+    (U.$("#calendar-grid")?.parentElement) ||
+    document.body;
+
+  if (!host.querySelector("#filtersToggle")) {
+    const btn = document.createElement("button");
+    btn.id = "filtersToggle";
+    btn.type = "button";
+    btn.title = "Show/Hide Filters";
+    btn.className =
+      "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm bg-white shadow-sm hover:bg-gray-50";
+    btn.setAttribute("aria-pressed", "false");
+    btn.innerHTML = `
+      <span>Filters</span>
+      <span class="relative inline-flex h-6 w-10 items-center rounded-full bg-gray-300 transition">
+        <span data-role="knob" class="inline-block h-5 w-5 transform rounded-full bg-white shadow transition translate-x-0"></span>
+      </span>
+    `;
+    // Put it at the top of the host
+    host.prepend(btn);
+
+    btn.addEventListener("click", () => {
+      const next = !loadFiltersVisible();
+      setFiltersVisible(next);
+    });
+  }
+  // Initialize hidden by default (OFF at start)
+  setFiltersVisible(loadFiltersVisible()); // localStorage default => false
+}
+
+// Re-apply filters visibility if the filters panel is rendered later (e.g., hydrated async)
+function applyFiltersVisibilitySoon() {
+  // One-shot micro-wait so late DOM nodes get picked up
+  requestAnimationFrame(() => setFiltersVisible(loadFiltersVisible()));
+}
+
+
+// Safe function aliases (avoid hard reference to a global "Cards")
+const renderWineIntoBox    = Cards?.renderWineIntoBox    ?? (() => {});
+const addDropZoneListeners = Cards?.addDropZoneListeners ?? (() => {});
+const wireCardInteractions = Cards?.wireCardInteractions ?? (() => {}); // if you ever export it
+const mapUIFiltersForBackend    = Filters?.mapUIFiltersForBackend    ?? (() => ({}));
+const filterCalendarByUIFilters = Filters?.filterCalendarByUIFilters ?? (wk => wk);
+
+// ---- MISSING helper: isoNowEurope (no external libs) ----
+function isoNowEurope(tz = "Europe/Zurich") {
+  // Convert "now" into a Date representing that timezone
+  const nowTZ = new Date(
+    new Date().toLocaleString("en-US", { timeZone: tz })
+  );
+
+  // ISO week calc on a copy (Thursday-based)
+  const d = new Date(Date.UTC(
+    nowTZ.getFullYear(),
+    nowTZ.getMonth(),
+    nowTZ.getDate()
+  ));
+  // Day of week with Monday=0..Sunday=6
+  const dayNum = (d.getUTCDay() + 6) % 7;
+  // Shift to Thursday of current week
+  d.setUTCDate(d.getUTCDate() - dayNum + 3);
+  const isoYear = d.getUTCFullYear();
+  // First Thursday of ISO year
+  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
+  const week = 1 + Math.round(
+    (d - firstThursday) / (7 * 24 * 60 * 60 * 1000)
+  );
+  return { year: isoYear, week };
+}
+
+// ---- MISSING function: wireCalendarDelegation ----
+// If you already attach per-card listeners in cards.js, this can be a no-op,
+// but we'll keep a safe scaffold for future delegated events.
+function wireCalendarDelegation(root = document) {
+  root.addEventListener("click", (e) => {
+    // Reserved for delegated handlers (e.g., day header buttons)
+    // Currently no-op to satisfy existing calls safely.
+  });
+}
 
 // ---- global state (shared across modules via window)
 window.__avuState = window.__avuState || {
@@ -23,15 +169,14 @@ window.__avuState = window.__avuState || {
     try { return JSON.parse(sessionStorage.getItem("selectedWine")); }
     catch { return null; }
   })(),
-  currentYear: isoNowEurope().year,
-  currentWeek: isoNowEurope().week,
+  currentYear: U.isoNowEurope().year,
+  currentWeek: U.isoNowEurope().week,
   CAMPAIGN_INDEX: { by_id: {}, by_name: {} },
-  isoNow: isoNowEurope,
+  isoNow: U.isoNowEurope,
 };
 
 // expose a few hooks used by modules (keeps coupling low)
 window.__avuFilters = Filters;
-window.__avuApi     = __api;      // was CalendarNS.__api
 window.__avuCards   = Cards;
 
 
@@ -43,19 +188,38 @@ window.recalcAndUpdateGauge   = recalcAndUpdateGauge;
 // one-time boot
 window.__BOOTED__ = true;
 document.addEventListener("DOMContentLoaded", async () => {
-  await buildCalendarSkeleton();       // ← now async
-  wireCalendarDelegation();
+  ensureFiltersToggle();
+  applyFiltersVisibilitySoon();
 
-  const sel = document.getElementById("weekSelector");
-  const wk  = sel?.value ? parseInt(sel.value, 10) : window.__avuState.currentWeek;
-  const yr  = window.__avuState.currentYear || new Date().getUTCFullYear();
+  // Compute default year/week if not present
+  if (!window.CAL?.year || !window.CAL?.week) {
+    const now = new Date();
+    const tzNow = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Zurich" }));
+    const d = new Date(Date.UTC(tzNow.getFullYear(), tzNow.getMonth(), tzNow.getDate()));
+    const dayNum = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - dayNum + 3);
+    const isoYear = d.getUTCFullYear();
+    const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
+    const week = 1 + Math.round((d - firstThursday) / (7 * 24 * 60 * 60 * 1000));
+    window.CAL = { ...(window.CAL || {}), year: isoYear, week };
+  }
 
-  await handleWeekYearChange(yr, wk);
+  buildCalendarSkeleton();
+
+  // Snap then fresh fetch
+  const snap = loadFullCalendarSnapshot(CAL.year, CAL.week);
+  if (snap) {
+    await renderDefaultScheduleFromData({ weekly_calendar: snap }, { year: CAL.year, week: CAL.week });
+  }
+  try {
+    await handleWeekYearChange(CAL.year, CAL.week);
+  } catch (e) {
+    console.warn("[boot] schedule fetch failed", e);
+  }
 });
 
 /* -------------------------------------------------------------------------- */
 // week selector — bulletproof wiring
-async function onWeekChange(e) {
+async function onWeekChange(e) {  
   const wk = parseInt(e.target.value, 10);
   if (!Number.isFinite(wk)) return;
 
@@ -122,16 +286,16 @@ function ensureLeadsLanes(){
 /* -------------------------------------------------------------------------- */
 /* Status panel & busy states                                                 */
 /* -------------------------------------------------------------------------- */
-function showStatusPanel(){ const el=$("#status-panel"); if(!el) return; el.classList.remove("hidden"); el.style.display="flex"; setStatusBadge("running"); setCalendarInteractivity(false); }
-function hideStatusPanel(){ const el=$("#status-panel"); if(!el) return; el.classList.add("hidden"); el.style.display="none"; setCalendarInteractivity(true); }
+function showStatusPanel(){ const el=U.$("#status-panel"); if(!el) return; el.classList.remove("hidden"); el.style.display="flex"; setStatusBadge("running"); setCalendarInteractivity(false); }
+function hideStatusPanel(){ const el=U.$("#status-panel"); if(!el) return; el.classList.add("hidden"); el.style.display="none"; setCalendarInteractivity(true); }
 function setStatus({ message="", progress=0, state="" }) {
-  $("#status-message").textContent = message || "";
-  $("#progress-bar-fill").style.width = `${Math.max(0, Math.min(100, progress))}%`;
-  $("#progress-percent").textContent = `${Math.round(progress)}%`;
+  U.$("#status-message").textContent = message || "";
+  U.$("#progress-bar-fill").style.width = `${Math.max(0, Math.min(100, progress))}%`;
+  U.$("#progress-percent").textContent = `${Math.round(progress)}%`;
   if (state) setStatusBadge(state);
 }
 function setStatusBadge(state) {
-  const badge=$("#status-badge"); if(!badge) return;
+  const badge=U.$("#status-badge"); if(!badge) return;
   const s=String(state||"idle").toLowerCase();
   badge.textContent=s.charAt(0).toUpperCase()+s.slice(1);
   badge.className="badge";
@@ -157,14 +321,14 @@ async function pollStatusUntilDone({ refreshSchedule=true } = {}) {
   return new Promise((resolve)=>{
     const timer = setInterval(async ()=>{
       try{
-        const s = await getJSON(URLS.status);
+        const s = await U.getJSON(URLS.status);
         setStatus({ message:s.message, progress:s.progress, state:s.state });
         const finished = (s.state==="completed") || (s.state==="error") || Number(s.progress)>=100;
         if(!finished) return;
         clearInterval(timer);
         setStatusBadge(s.state);
         if(s.state==="completed" && refreshSchedule){
-          await Calendar.handleWeekYearChange(window.__avuState.currentYear, window.__avuState.currentWeek);
+          await handleWeekYearChange(window.__avuState.currentYear, window.__avuState.currentWeek);
           hideStatusPanel();
         } else { setCalendarInteractivity(true); }
         stopGaugeOscillation();
@@ -192,7 +356,7 @@ async function pollStatusUntilDone({ refreshSchedule=true } = {}) {
 /* Buttons enable/disable                                                     */
 /* -------------------------------------------------------------------------- */
 function updateLoadBtnState(){
-  const btn=$("#loadScheduleBtn"); if(!btn) return;
+  const btn=U.$("#loadScheduleBtn"); if(!btn) return;
   const calBusy = !!document.querySelector(".calendar-grid-container")?.classList.contains("is-busy");
   const shouldDisable = !window.__avuState.engineReady || window.__avuState.runInFlight || calBusy;
   btn.disabled = shouldDisable;
@@ -205,7 +369,7 @@ function updateLoadBtnState(){
   else btn.title = "Reload calendar for the selected week";
 }
 function updateStartBtnState(){
-  const btn=$("#startEngineBtn"); if(!btn) return;
+  const btn=U.$("#startEngineBtn"); if(!btn) return;
   const disable = window.__avuState.engineReady || window.__avuState.runInFlight;
   btn.disabled = disable;
   btn.classList.toggle("opacity-50", disable);
@@ -214,7 +378,7 @@ function updateStartBtnState(){
   btn.title = disable ? "Engine already initialized" : "Start AVU Engine";
 }
 function setOfferButtonsEnabled(enabled){
-  ["#generateOfferBtn","#generateTailorMadeOfferBtn"].map((s)=>$(s)).forEach((b)=>{
+  ["#generateOfferBtn","#generateTailorMadeOfferBtn"].map((s)=>U.$(s)).forEach((b)=>{
     if(!b) return;
     b.disabled = !enabled;
     b.classList.toggle("opacity-50", !enabled);
@@ -392,7 +556,7 @@ function wireQuickAdd() {
     if (cell) {
       const prevAuto = cell.querySelector('.wine-box:not([data-locked="true"])');
       if (prevAuto) prevAuto.remove();
-      Cards.renderWineIntoBox(cell, {
+      renderWineIntoBox(cell, {
         id, wine, vintage, full_type: found?.full_type, region_group: found?.region_group,
         avg_cpi_score: 0, match_quality: lockIt ? "Locked" : "Auto", locked: lockIt
       }, { locked: lockIt });

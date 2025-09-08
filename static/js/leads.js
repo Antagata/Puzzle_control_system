@@ -1,54 +1,42 @@
 // static/js/leads.js
 import { URLS, DAYS } from "./utils.js";
 import { renderWineIntoBox, addDropZoneListeners } from "./cards.js";
+import * as U from "./utils.js";
 
-
-// Nine lanes, top → bottom
-const LANE_CONFIG = [
-  { key: 'vip-ch',     label: 'VIP · CH',                segment: 'CH'    }, // 0  (VIP tasting can live here)
-  { key: 'vip-world',  label: 'VIP · World',             segment: 'World' }, // 1  (new lane “below VIP tasting / above autumn promo”)
-  { key: 'key-ch',     label: 'Key Accounts · CH',       segment: 'CH'    }, // 2
-  { key: 'key-world',  label: 'Key Accounts · World',    segment: 'World' }, // 3
-  { key: 'marketing',  label: 'Marketing Push'                                  }, // 4 (Autumn promo can live around here)
-  { key: 'retail',     label: 'Retail Activations'                              }, // 5
-  { key: 'weekend-a',  label: 'Weekend A'                                       }, // 6 (above Sat/Sun)
-  { key: 'weekend-b',  label: 'Weekend B'                                       }, // 7 (above Sat/Sun)
-  { key: 'overflow',   label: 'Overflow / Experiments'                          }, // 8
+const LANE_DEFS = [
+  { key: "vip",       title: "VIP",       classes: "bg-red-100 ring-1 ring-red-200" },
+  { key: "prospects", title: "Prospects", classes: "bg-sky-100 ring-1 ring-sky-200" },
+  { key: "horeca",    title: "Horeca",    classes: "bg-amber-100 ring-1 ring-amber-200" }, // light gold
 ];
 
 /* ------------------------------- Lanes row -------------------------------- */
 
 export function ensureLeadsLanes(
-  root = document.getElementById("main-calendar-grid"),
-  laneCount = LANE_CONFIG.length
+  root = document.getElementById("main-calendar-grid")
 ) {
-  if (!root) return null;
-  let lanes = root.querySelector(".leads-lanes");
-  if (!lanes) {
-    lanes = document.createElement("div");
-    lanes.className = "leads-lanes";
-    root.prepend(lanes);
+  let host = U.$("#leads-lanes") || U.$('[data-role="leads-lanes"]');
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "leads-lanes";
+    host.className = "grid grid-cols-3 gap-3 mt-3";
+    const where = U.$("#calendar-area") || U.$("#calendar-grid")?.parentElement || document.body;
+    where.parentElement?.insertBefore(host, where); // place above calendar if you like
   }
-
-  // Rebuild lanes if count changed
-  const existing = lanes.querySelectorAll(".lead-lane");
-  if (existing.length !== laneCount) {
-    lanes.innerHTML = "";
-    for (let i = 0; i < laneCount; i++) {
-      const lane = document.createElement("div");
-      lane.className = "lead-lane";
-      lane.dataset.lane = String(i);
-
-      // Optional on-lane label
-      const label = document.createElement("div");
-      label.className = "lane-label";
-      label.textContent = (LANE_CONFIG[i]?.label) || `Lane ${i+1}`;
-      lane.appendChild(label);
-
-      lanes.appendChild(lane);
-    }
+  // Clear & rebuild lanes
+  host.innerHTML = "";
+  for (const lane of LANE_DEFS) {
+    const col = document.createElement("div");
+    col.dataset.lane = lane.key;
+    col.className = `rounded-xl p-2 ${lane.classes}`;
+    col.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <div class="font-semibold">${lane.title}</div>
+        <span class="text-xs opacity-60" data-count>0</span>
+      </div>
+      <div class="grid gap-2" data-lane-cards></div>
+    `;
+    host.appendChild(col);
   }
-  return lanes;
 }
 
 /* ------------------------------ Normalization ----------------------------- */

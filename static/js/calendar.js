@@ -1,378 +1,184 @@
 // static/js/calendar.js
-// ------------------------------------------------------------
-// SYNC:  buildCalendarSkeleton, wireCalendarDelegation,
-//        renderDefaultScheduleFromData, renderFullFromData, handleWeekChange
-// ASYNC: handleWeekYearChange, fetchAndRenderLeads (+ optional persistence)
-// ------------------------------------------------------------
-
-import {
-  $, $all, CAL, URLS, NUM_SLOTS, DAYS,
-  weekSnapKey, weekLockedKey, getJSON, postJSON
-} from "./utils.js";
+import * as U from "./utils.js";
+const { CAL, URLS, NUM_SLOTS, DAYS, weekSnapKey, weekLockedKey } = U;
 import { renderWineIntoBox, addDropZoneListeners } from "./cards.js";
-import { filterCalendarByUIFilters, mapUIFiltersForBackend } from "./filters.js";
 
-// Leads module (sync exports only; no dynamic import/await here)
-import { ensureLeadsLanes, renderLeadsFromData, getLeadsForWeek } from "./leads.js";
-export { ensureLeadsLanes, renderLeadsFromData, getLeadsForWeek }; // convenience re-export
-
-/* -------------------- helpers -------------------- */
-
-function isoWeek(d = new Date()) {
-  const dt = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = (dt.getUTCDay() + 6) % 7; // Mon=0
-  dt.setUTCDate(dt.getUTCDate() - dayNum + 3);
-  const firstThu = new Date(Date.UTC(dt.getUTCFullYear(), 0, 4));
-  const week = 1 + Math.round(((dt - firstThu) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
-  return { year: dt.getUTCFullYear(), week };
-}
-
-function isCalendarLike(obj) {
-  if (!obj || typeof obj !== "object") return false;
-  return DAYS.every((d) => Array.isArray(obj[d]));
-}
-
-// Fallback demo data if API is empty or malformed
-function demoCalendarData() {
-  const mk = (name, vintage, opts={}) => ({
-    id: `${name}-${Math.random().toString(36).slice(2)}`,
-    wine: name,
-    vintage: vintage || 'NV',
-    priceTier: opts.priceTier || 'Mid-range',
-    stock: opts.stock ?? 24,
-    cpiScore: opts.cpiScore ?? 0.5,
-    type: opts.type || 'red',
-    locked: !!opts.locked,
-    auto: !!opts.auto,
-  });
-  return {
-    Monday:    [ mk('Nebbiolo','2019',{cpiScore:.66}), mk('Grüner','2021',{type:'white'}) ],
-    Tuesday:   [ mk('Pinot Noir','2020',{locked:true}), mk('Champagne','NV',{type:'sparkling'}) ],
-    Wednesday: [ mk('Barolo','2016',{priceTier:'Premium',auto:true}) ],
-    Thursday:  [ mk('Syrah','2018'), mk('Sancerre','2022',{type:'white'}) ],
-    Friday:    [ mk('Rioja','2017',{locked:true}), mk('Rosé','2023',{type:'rose'}) ],
-    Saturday:  [ mk('Bordeaux','2015',{priceTier:'Luxury'}) ],
-    Sunday:    [ mk('Amarone','2018') ],
-  };
-}
-
-/* -------------------- week selector -------------------- */
-
-function ensureWeekSelector() {
-  const sel = document.getElementById("weekSelector");
-  if (!sel) return;
-
-  window.__avuState = window.__avuState || {};
-  const { year, week } = isoWeek();
-
-  if (!sel.options.length) {
-    for (let w = 1; w <= 53; w++) {
-      const opt = document.createElement("option");
-      opt.value = String(w);
-      opt.textContent = `Week ${w}`;
-      if (w === week) opt.selected = true;
-      sel.appendChild(opt);
-    }
-  }
-
-  sel.disabled = false;
-  sel.classList.remove("opacity-50", "pointer-events-none");
-
-  if (!sel.__avuWired) {
-    sel.addEventListener("change", (e) => {
-      const wk = parseInt(e.target.value || week, 10) || week;
-      handleWeekYearChange(window.__avuState.currentYear || year, wk);
-    });
-    sel.__avuWired = true;
-  }
-
-  if (!window.__avuState.currentYear || !window.__avuState.currentWeek) {
-    window.__avuState.currentYear = parseInt(sessionStorage.getItem("selectedYear") || year, 10);
-    window.__avuState.currentWeek = parseInt(sessionStorage.getItem("selectedWeek") || week, 10);
-    const opt = sel.querySelector(`option[value="${window.__avuState.currentWeek}"]`);
-    if (opt) opt.selected = true;
-  }
-}
-
-/* -------------------- calendar skeleton (SYNC) -------------------- */
-
-export function clearCalendar() {
-  $all(".fill-box").forEach((b) => {
-    b.innerHTML = "";
-    b.classList.remove("filled", "active", "over", "empty");
-  });
-  $all(".overflow-drawer, .leads-drawer").forEach((drawer) => {
-    $all(".wine-box", drawer).forEach((c) => c.remove());
-    drawer.classList.remove("active");
-  });
-  const lanes = document.querySelector(".leads-lanes");
-  if (lanes) lanes.innerHTML = "";
-}
-
-export function buildCalendarSkeleton() {
-  const grid = document.getElementById("main-calendar-grid");
-  if (!grid) return;
-
-  grid.innerHTML = "";
-
-  // Row 1: leads lanes (3 lanes total)
-  ensureLeadsLanes(grid, 3);
-
-  // Row 2: day columns with NUM_SLOTS and an overflow drawer
-  DAYS.forEach((day) => {
-    const col = document.createElement("div");
-    col.className = "day-column";
-    col.innerHTML = `<div class="day-name">${day}</div>`;
-
-    const body = document.createElement("div");
-    body.className = "day-body";
-
-    for (let i = 0; i < NUM_SLOTS; i++) {
-      const box = document.createElement("div");
-      box.className = "fill-box empty";
-      box.dataset.day  = day;
-      box.dataset.slot = String(i);
-      box.addEventListener("click", () => window.openQuickAdd?.(day, i));
-      box.addEventListener("contextmenu", (e) => e.preventDefault());
-      body.appendChild(box);
-    }
-
-    const overflow = document.createElement("div");
-    overflow.className = "overflow-drawer";
-    overflow.dataset.day = day;
-
-    col.appendChild(body);
-    col.appendChild(overflow);
-    grid.appendChild(col);
-  });
-
-  addDropZoneListeners?.();
-  ensureWeekSelector();
-
-  // Notify others the calendar DOM is ready
-  window.dispatchEvent(new CustomEvent("calendar:ready", {
-    detail: {
-      year: window.__avuState?.currentYear,
-      week: window.__avuState?.currentWeek
-    }
-  }));
-}
-
-export function wireCalendarDelegation() {
-  const wrap = CAL();
-  if (!wrap || wrap.__delegationWired) return;
-
-  wrap.addEventListener("click", (e) => {
-    const lockBtn = e.target.closest(".lock-icon");
-    if (lockBtn) return;
-    const card = e.target.closest(".wine-box");
-    if (card) { e.stopPropagation(); window.__avuCards?.toggleSelectWine?.(card); }
-  });
-
-  wrap.addEventListener("contextmenu", (e) => {
-    const card = e.target.closest(".wine-box");
-    if (card) { e.preventDefault(); e.stopPropagation(); window.__avuCards?.showWineContextMenu?.(card, e.clientX, e.clientY); }
-  });
-
-  wrap.__delegationWired = true;
-}
-
-/* -------------------- renderers -------------------- */
-
-export function renderDefaultScheduleFromData(calendarLike, maxSlotsPerDay = NUM_SLOTS) {
-  const cal = calendarLike?.weekly_calendar || calendarLike;
-  const data = isCalendarLike(cal) ? cal : demoCalendarData();
-
-  let placed = false;
-  Object.keys(data).forEach((day) => {
-    const items = Array.isArray(data[day]) ? data[day] : [];
-    items.forEach((it, idx) => {
-      const target =
-        (idx < maxSlotsPerDay && document.querySelector(`.fill-box[data-day="${day}"][data-slot="${idx}"]`)) ||
-        document.querySelector(`.overflow-drawer[data-day="${day}"]`);
-      if (!target) return;
-      renderWineIntoBox(target, it, { locked: !!it.locked });
-      target.classList.add("filled");
-      placed = true;
-    });
-  });
-  addDropZoneListeners?.();
-  return placed;
-}
-
-export function renderFullFromData(calendar) {
-  if (!isCalendarLike(calendar)) return false;
-  clearCalendar();
-  buildCalendarSkeleton();
-  wireCalendarDelegation();
-
-  let placed = false;
-  DAYS.forEach((day) => {
-    const arr = Array.isArray(calendar?.[day]) ? calendar[day] : [];
-    arr.slice(0, NUM_SLOTS).forEach((it, idx) => {
-      if (!it) return;
-      const box = document.querySelector(`.fill-box[data-day="${day}"][data-slot="${idx}"]`);
-      if (!box) return;
-      renderWineIntoBox(box, it, { locked: !!it.locked });
-      placed = true;
-    });
-  });
-
-  window?.recalcAndUpdateGauge?.({ animate: false });
-  return placed;
-}
-
-// --- calendar.js (add) ---
-// Minimal load function so director_app.js can call it safely.
-export function loadFullCalendarSnapshot(
-  year = window.__avuState?.currentYear,
-  week = window.__avuState?.currentWeek
-) {
-  try {
-    const key = weekSnapKey(year, week);
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    const snap = JSON.parse(raw);
-    // If you have renderFullFromData, use it; otherwise fall back:
-    if (typeof renderFullFromData === "function") {
-      renderFullFromData(snap);
-    } else {
-      renderDefaultScheduleFromData(snap);
-    }
-    return snap;
-  } catch {
-    return null;
-  }
-}
-/* -------------------- week switching pipeline -------------------- */
-
-// Guard optional helpers if they aren't defined/imported yet
-const hasFn = (name) => typeof (/** @type {any} */(globalThis))[name] === 'function';
-
-export async function handleWeekYearChange(newYear, newWeek) {
-  window.__avuState = window.__avuState || {};
-  if (window.__avuState.isWeekLoading) return;
-  window.__avuState.isWeekLoading = true;
-
-  const wrap = CAL();
-  if (wrap) { wrap.setAttribute("aria-busy","true"); wrap.classList.add("is-busy"); }
-
-  try {
-    const prevY = window.__avuState.currentYear;
-    const prevW = window.__avuState.currentWeek;
-
-    if (prevY && prevW && (prevY !== newYear || prevW !== newWeek)) {
-      if (hasFn('persistLockedCalendarState')) { try { await persistLockedCalendarState(prevY, prevW); } catch {} }
-      if (hasFn('persistFullCalendarSnapshot')) { try { await persistFullCalendarSnapshot(prevY, prevW); } catch {} }
-    }
-
-    window.__avuState.currentYear = parseInt(newYear, 10);
-    window.__avuState.currentWeek = parseInt(newWeek, 10);
-    sessionStorage.setItem("selectedYear", String(window.__avuState.currentYear));
-    sessionStorage.setItem("selectedWeek", String(window.__avuState.currentWeek));
-
-    clearCalendar();
-    buildCalendarSkeleton();
-    wireCalendarDelegation();
-
-    let locked=null, schedule=null, leads=null;
-    try {
-      const p1 = hasFn('fetchLockedForWeek')          ? fetchLockedForWeek(window.__avuState.currentWeek, window.__avuState.currentYear) : Promise.resolve(null);
-      const p2 = hasFn('fetchDefaultScheduleForWeek') ? fetchDefaultScheduleForWeek(window.__avuState.currentWeek, window.__avuState.currentYear) : Promise.resolve(null);
-      const p3 = getLeadsForWeek(window.__avuState.currentYear, window.__avuState.currentWeek);
-      [locked, schedule, leads] = await Promise.all([p1, p2, p3]);
-    } catch {}
-
-    if (locked && Object.keys(locked).length && hasFn('renderLockedOnlyFromData')) {
-      renderLockedOnlyFromData(locked);
-    }
-
-    const didPlace = renderDefaultScheduleFromData(schedule);
-    if (!didPlace) console.warn("[calendar] server schedule not usable; rendered demo data");
-
-    if (leads) {
-      const payload = leads?.leads || leads;
-      renderLeadsFromData(Array.isArray(payload) ? payload : []);
-    }
-
-    if (hasFn('persistLockedCalendarState')) { try { await persistLockedCalendarState(window.__avuState.currentYear, window.__avuState.currentWeek); } catch {} }
-    if (hasFn('persistFullCalendarSnapshot')) { try { await persistFullCalendarSnapshot(window.__avuState.currentYear, window.__avuState.currentWeek); } catch {} }
-
-    window.dispatchEvent(new CustomEvent("calendar:week-changed", {
-      detail: { year: window.__avuState.currentYear, week: window.__avuState.currentWeek }
-    }));
-
-    window?.recalcAndUpdateGauge?.({ animate:false });
-  } finally {
-    if (wrap) { wrap.removeAttribute("aria-busy"); wrap.classList.remove("is-busy"); }
-    window.__avuState.isWeekLoading = false;
-  }
-}
-
-// Snap full calendar DOM → localStorage (fallback implementation)
-export async function persistFullCalendarSnapshot(
-  year = window.__avuState?.currentYear,
-  week = window.__avuState?.currentWeek
-) {
-  try {
-    const snap = typeof readDOMFullState === "function" ? readDOMFullState() : null;
-    if (snap) localStorage.setItem(weekSnapKey(year, week), JSON.stringify(snap));
-  } catch {}
-}
-
-// Snap locked state → localStorage (fallback implementation)
-export async function persistLockedCalendarState(
-  year = window.__avuState?.currentYear,
-  week = window.__avuState?.currentWeek
-) {
-  try {
-    const locked = typeof readDOMLockedState === "function" ? readDOMLockedState() : null;
-    if (locked) localStorage.setItem(weekLockedKey(year, week), JSON.stringify(locked));
-  } catch {}
-}
-
-// Convenience wrapper — call this from UI when only the week changes.
-export function handleWeekChange(wk) {
-  return handleWeekYearChange(window.__avuState?.currentYear, parseInt(wk, 10));
-}
-
-/* -------------------- optional convenience -------------------- */
-
-export async function fetchAndRenderLeads(
-  year = window.__avuState?.currentYear,
-  week = window.__avuState?.currentWeek
-) {
-  if (!year || !week) return;
-  const payload = await getLeadsForWeek(year, week).catch(() => null);
-  if (!payload) return;
-  renderLeadsFromData(payload);
-}
-
-/* -------------------- tiny API exposed to other modules -------------------- */
-
-export const __api = {
-  async fetchLockedForWeek(week, year) {
-    if (hasFn('fetchLockedForWeek')) return fetchLockedForWeek(week, year);
-    return null;
-  },
-  async saveLocked(year, week, payload) {
-    return postJSON(URLS.locked, { year, week, locked_calendar: payload });
-  },
-  async loadCampaignIndex() { /* unchanged */ /* ... */ }
+/* ---------- Day color presets (includes gold) ---------- */
+const BOX_COLORS = {
+  gold: "#D4AF37",
+  blue: "#DBEAFE",
+  green: "#DCFCE7",
+  rose: "#FFE4E6",
 };
 
-// --- No-op snapshot functions to avoid crashes ---
-export async function loadFullCalendarSnapshot(year, week) {
-  // return null to indicate "no snapshot" (avoid crashes)
-  return null;
+/* ---------- LocalStorage helpers ---------- */
+function loadFullCalendarSnapshot(year, week) {
+  try {
+    const raw = localStorage.getItem(U.weekSnapKey(year, week));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveFullCalendarSnapshot(year, week, data) {
+  try { localStorage.setItem(U.weekSnapKey(year, week), JSON.stringify(data)); } catch {}
+}
+function loadLockedForWeek(year, week) {
+  try {
+    const raw = localStorage.getItem(U.weekLockedKey(year, week));
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function saveLockedForWeek(year, week, locked) {
+  try { localStorage.setItem(U.weekLockedKey(year, week), JSON.stringify(locked)); } catch {}
 }
 
-export async function persistFullCalendarSnapshot(year, week) {
-  // no-op stub (keeps callers happy)
-  return true;
+/* ---------- Day color persistence ---------- */
+function dayColorKey(year, week) { return `calColors:${year}:${week}`; }
+function getDayColors(year, week) {
+  try {
+    const raw = localStorage.getItem(dayColorKey(year, week));
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function setDayColor(year, week, day, color) {
+  const map = getDayColors(year, week);
+  if (color) map[day] = color; else delete map[day];
+  try { localStorage.setItem(dayColorKey(year, week), JSON.stringify(map)); } catch {}
+}
+function applyDayColor(day, color) {
+  const body = U.$(`[data-day="${day}"] [data-day-body]`);
+  if (!body) return;
+  body.style.background = color || "";
+}
+function applyAllDayColors(year, week) {
+  const map = getDayColors(year, week);
+  for (const d of U.DAYS) applyDayColor(d, map[d]);
 }
 
-export async function persistLockedCalendarState(year, week) {
-  // no-op stub (keeps callers happy)
-  return true;
+/* ---------- Merge schedule with locked items ---------- */
+function mergeScheduleWithLocks(schedule, locked, numSlots = U.NUM_SLOTS) {
+  const days = Object.keys(schedule || {});
+  const out = {};
+  for (const d of days) {
+    const lockedBySlot = (locked?.[d] || []).reduce((acc, card) => {
+      if (Number.isInteger(card.slot)) acc[card.slot] = card;
+      return acc;
+    }, {});
+    const pool = (schedule[d] || []).filter(x => !x.locked);
+    const merged = [];
+    for (let s = 0; s < numSlots; s++) {
+      if (lockedBySlot[s]) merged.push({ ...lockedBySlot[s], locked: true });
+      else if (pool.length) merged.push(pool.shift());
+    }
+    // Overflow drawer stays after slots
+    const overflow = pool;
+    out[d] = [...merged, ...overflow.map(c => ({ ...c, overflow: true }))];
+  }
+  return out;
 }
+
+function buildCalendarSkeleton(rootSel = "#calendar-grid") {
+  const root = U.$(rootSel);
+  if (!root) return;
+  root.innerHTML = "";
+  for (const day of U.DAYS) {
+    const col = document.createElement("div");
+    col.className = "day-col flex flex-col gap-2";
+    col.dataset.day = day;
+    col.innerHTML = `
+      <div class="day-header flex items-center justify-between">
+        <div class="font-semibold">${day}</div>
+        <div class="flex flex-col items-end gap-1">
+          <div class="relative">
+            <button class="text-xs px-2 py-1 rounded border" data-btn="palette" title="Color day box">🎨 Color</button>
+            <div class="palette-dropdown hidden absolute right-0 mt-1 p-2 bg-white shadow-xl rounded-xl z-10">
+              <div class="grid grid-cols-5 gap-2">
+                ${Object.entries(BOX_COLORS).map(([name, color]) => `
+                  <button class="w-6 h-6 rounded-md ring-1 ring-black/10" data-swatch data-color="${color}" title="${name}" style="background:${color}"></button>
+                `).join("")}
+                <button class="text-xs px-2 py-1 border rounded" data-swatch data-color="" title="Clear">Clear</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="day-body rounded-xl ring-1 ring-black/5 p-2 transition-colors" data-day-body>
+        <div class="day-cards grid gap-2"></div>
+      </div>
+    `;
+    root.appendChild(col);
+  }
+  wireDayPaletteControls(root);
+}
+
+function wireDayPaletteControls(root = document) {
+  root.addEventListener("click", (e) => {
+    const btn = e.target.closest('[data-btn="palette"]');
+    if (btn) {
+      const dd = btn.parentElement.querySelector(".palette-dropdown");
+      if (dd) dd.classList.toggle("hidden");
+      // close others
+      U.$all(".palette-dropdown").forEach(x => { if (x !== dd) x.classList.add("hidden"); });
+    }
+    const swatch = e.target.closest("[data-swatch]");
+    if (swatch) {
+      const dayEl = e.target.closest("[data-day]");
+      const day = dayEl?.dataset.day;
+      const color = swatch.dataset.color || "";
+      if (day && U.CAL?.year && U.CAL?.week) {
+        setDayColor(U.CAL.year, U.CAL.week, day, color);
+        applyDayColor(day, color);
+      }
+      // hide palette
+      const dd = dayEl?.querySelector(".palette-dropdown");
+      if (dd) dd.classList.add("hidden");
+    }
+  });
+  // click outside closes all
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".palette-dropdown") && !e.target.closest('[data-btn="palette"]')) {
+      U.$all(".palette-dropdown").forEach(x => x.classList.add("hidden"));
+    }
+  });
+}
+
+async function renderDefaultScheduleFromData(resp, { year, week } = {}) {
+  const data = resp?.weekly_calendar || resp?.data || null;
+  const grid = U.$("#calendar-grid");
+  if (!grid) return;
+  const weekly = data && typeof data === "object" ? data : {
+    Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [], Sunday: []
+  };
+  const locked = (year && week) ? loadLockedForWeek(year, week) : {};
+  const merged = mergeScheduleWithLocks(weekly, locked, U.NUM_SLOTS);
+  for (const day of U.DAYS) {
+    const box = grid.querySelector(`[data-day="${day}"] .day-cards`);
+    if (!box) continue;
+    box.innerHTML = "";
+    for (const card of (merged[day] || [])) {
+      renderWineIntoBox(box, card);
+    }
+  }
+  if (year && week) saveFullCalendarSnapshot(year, week, merged);
+  if (year && week) applyAllDayColors(year, week);
+}
+
+let handleWeekYearChange;
+handleWeekYearChange = async function handleWeekYearChange(year, week) {
+  const url = `${U.URLS.schedule}?year=${year}&week=${week}`;
+  const resp = await U.getJSON(url);
+  await renderDefaultScheduleFromData(resp, { year, week });
+  applyAllDayColors(year, week);
+};
+
+export {
+  buildCalendarSkeleton,
+  renderDefaultScheduleFromData,
+  handleWeekYearChange,
+  loadFullCalendarSnapshot,
+  saveFullCalendarSnapshot,
+  loadLockedForWeek,
+  saveLockedForWeek,
+  mergeScheduleWithLocks,
+  applyAllDayColors,
+  setDayColor,
+};

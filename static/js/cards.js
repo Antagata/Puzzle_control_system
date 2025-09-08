@@ -1,6 +1,5 @@
 // static/js/cards.js
 import { $, $all, CAL, DAYS, NUM_SLOTS, makeKey, addLongPress } from "./utils.js";
-import * as Calendar from "./calendar.js";
 
 /* -------------------------------------------------------------------------- */
 /*                              Module-level state                             */
@@ -247,85 +246,60 @@ export function hideWineTooltip() {
 }
 
 // --- cards.js (add) ---
-export function wireCardInteractions(cardEl) {
-  // lock toggle
-  const lockBtn = cardEl.querySelector(".lock-icon");
-  if (lockBtn && !lockBtn._wired) {
+function wireCardInteractions(cardEl, {
+  onLockToggle = () => {},
+  onAutoToggle = () => {},
+  onDelete = () => {},
+} = {}) {
+  const lockBtn = cardEl.querySelector('[data-btn="lock"]');
+  const autoBtn = cardEl.querySelector('[data-btn="auto"]');
+  if (lockBtn) {
     lockBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const locked = cardEl.dataset.locked === "true";
-      cardEl.dataset.locked = String(!locked);
-      cardEl.classList.toggle("locked", !locked);
-      // optional: window.__avuApi?.saveLocked?.(...)
+      const nowLocked = !cardEl.classList.contains("is-locked");
+      cardEl.classList.toggle("is-locked", nowLocked);
+      onLockToggle(nowLocked, cardEl);
     });
-    lockBtn._wired = true;
   }
-
-  // selection
-  if (!cardEl._selectWired) {
-    cardEl.addEventListener("click", (e) => {
-      if (e.target.closest(".lock-icon")) return;
-      document.querySelectorAll(".wine-box.selected").forEach(x=>x.classList.remove("selected"));
-      cardEl.classList.add("selected");
-      window.notifySelectedWine?.({ id: cardEl.dataset.id });
+  if (autoBtn) {
+    autoBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cardEl.classList.toggle("is-auto");
+      onAutoToggle(cardEl.classList.contains("is-auto"), cardEl);
     });
-    cardEl._selectWired = true;
   }
+  // Right-click to delete (only if not locked)
+  cardEl.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (cardEl.classList.contains("is-locked")) return;
+    onDelete(cardEl);
+    cardEl.remove();
+  });
 }
 
-/* --------------------------- Render a single card -------------------------- */
-
-export function renderWineIntoBox(box, it, { locked = false } = {}) {
-  if (!box) return null;
-
-  const el = document.createElement('div');
-  el.className = `wine-box ${typeClass(it.type)}`;
-  el.draggable = true;
-
-  // datasets used elsewhere
-  el.dataset.name     = it.wine || it.name || '';
-  el.dataset.vintage  = it.vintage || 'NV';
-  el.dataset.priceTier= it.priceTier || '';
-  el.dataset.stock    = String(it.stock ?? '');
-  el.dataset.cpiScore = String(it.cpiScore ?? '');
-  el.dataset.day      = box.dataset.day || '';
-  el.dataset.locked   = String(!!locked);
+export function renderWineIntoBox(containerEl, cardData) {
+  const el = document.createElement("div");
+  el.className = "wine-card group relative rounded-xl shadow ring-1 ring-black/5 p-2 bg-white";
+  el.dataset.id = cardData?.id || crypto.randomUUID();
 
   el.innerHTML = `
-    <div class="wine-header">
-      <div class="wine-headline">
-        <div class="wine-name">${escapeHtml(it.wine || it.name || 'Untitled')} <span class="muted">(${escapeHtml(it.vintage || 'NV')})</span></div>
-        <div class="wine-details">
-          ${escapeHtml(it.region || '')}${it.priceTier ? ` • ${escapeHtml(it.priceTier)}` : ''}${it.stock ? ` • Stock ${escapeHtml(it.stock)}` : ''}
-        </div>
+    <div class="flex items-start justify-between gap-2">
+      <div>
+        <div class="text-sm font-semibold">${cardData?.name ?? "Unnamed Wine"}</div>
+        <div class="text-xs opacity-70">${cardData?.vintage ?? "NV"} • ${cardData?.size ?? ""}</div>
       </div>
-      <div class="wine-actions">
-        ${it.auto ? `<span class="badge badge-auto" title="Auto-picked">AUTO</span>` : ''}
-        <button class="lock-icon" type="button" aria-label="${locked ? 'Unlock' : 'Lock'}" title="${locked ? 'Unlock' : 'Lock'}">
-          <i class="fa-solid ${locked ? 'fa-lock' : 'fa-lock-open'}"></i>
-        </button>
+      <div class="flex items-center gap-2">
+        <button class="text-xs px-2 py-1 rounded border" data-btn="auto">Auto</button>
+        <button class="text-xs px-2 py-1 rounded border" data-btn="lock">Lock</button>
       </div>
-    </div>
-    <div class="wine-submeta">
-      ${Number.isFinite(+it.cpiScore) ? `<span class="badge">CPI ${(+it.cpiScore).toFixed(2)}</span>` : ''}
-      ${it.match ? `<span class="match-badge ${matchClass(it.match)}">${escapeHtml(it.match)}</span>` : ''}
-      ${it.notes ? `<span class="muted">${escapeHtml(it.notes)}</span>` : ''}
     </div>
   `;
-
-  // ensure action area sits on the right
-  // (CSS below makes it stick; this is defensive if CSS loads late)
-  el.querySelector('.wine-header')?.style.setProperty('display','flex');
-  el.querySelector('.wine-header')?.style.setProperty('align-items','center');
-  el.querySelector('.wine-header')?.style.setProperty('justify-content','space-between');
-
-  // listeners (click select, context menu, drag, lock)
-  wireCardInteractions(el, { locked });
-
-  // Append into slot/drawer
-  box.appendChild(el);
-  box.classList.add('filled');
-  return el;
+  wireCardInteractions(el, {
+    onLockToggle: () => {},
+    onAutoToggle: () => {},
+    onDelete: () => {},
+  });
+  containerEl.appendChild(el);
 }
 
 // small helpers

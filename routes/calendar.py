@@ -1,4 +1,3 @@
-
 # routes/calendar.py
 """Calendar + notebook endpoints."""
 
@@ -21,16 +20,35 @@ def _load_json(path, fallback):
     except Exception:
         return fallback
 
+def _empty_week():
+    return {d: [] for d in ("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")}
+
+def _coerce_week_shape(obj):
+    if not isinstance(obj, dict):
+        return _empty_week()
+    out = _empty_week()
+    for k, v in obj.items():
+        if isinstance(v, list):
+            key = str(k).strip().capitalize()
+            if key in out:
+                out[key] = v
+    return out
+
 # --- Thin predictable endpoints ---
 @calendar_api.get("/api/schedule")
 def api_schedule():
-    year = request.args.get("year", type=int)
-    week = request.args.get("week", type=int)
-    # Your notebook should write this file. Fallback to empty.
-    data = _load_json(NB / "filters_resolved.json", {"weekly_calendar": {
-        "Monday": [], "Tuesday": [], "Wednesday": [], "Thursday": [], "Friday": [], "Saturday": [], "Sunday": []
-    }})
-    return jsonify(data)
+    year = int(request.args.get("year", 0) or 0)
+    week = int(request.args.get("week", 0) or 0)
+    path = Settings.IRON_DATA_PATH / "weekly_campaign_schedule.json"
+    data = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            app.logger.exception("Failed to read schedule JSON: %s", e)
+    wk = data.get("weekly_calendar") or data.get("data") or {}
+    wk = _coerce_week_shape(wk)
+    return jsonify({"weekly_calendar": wk, "year": year, "week": week})
 
 @calendar_api.get("/api/locked")
 def api_locked():

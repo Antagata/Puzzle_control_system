@@ -104,12 +104,24 @@ def status():
         progress = int(float(raw_progress)) if isinstance(raw_progress, (int, float, str)) else 0
     except Exception:
         progress = 0
+    # Calculate duration if possible
+    updated_at = data.get("updated_at")
+    started_at = data.get("started_at")
+    duration_sec = None
+    try:
+        if started_at and updated_at:
+            from dateutil.parser import isoparse
+            duration_sec = (isoparse(updated_at) - isoparse(started_at)).total_seconds()
+    except Exception:
+        duration_sec = None
     payload = {
         "notebook": data.get("notebook", ""),
         "state": (data.get("state") or data.get("status") or "idle"),
         "progress": progress,
         "message": data.get("message") or "Waiting…",
         "updated_at": data.get("updated_at") or datetime.now(timezone.utc).isoformat(),
+        "done": bool(data.get("done") or (data.get("state") in {"ok", "completed", "error"})),
+        "duration_sec": duration_sec,
     }
     resp = jsonify(payload)
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -312,7 +324,37 @@ def catalog_search():
     except Exception as e:
         return jsonify({"error": str(e), "items": []}), 200
 
+# ----------------------------- Route Map -----------------------------
+def _print_route_map(app):
+    try:
+        print("\n=== URL MAP ===")
+        with app.app_context():
+            for r in app.url_map.iter_rules():
+                methods = ",".join(sorted(m for m in r.methods if m not in {"HEAD", "OPTIONS"}))
+                print(f"{methods:10} {r.rule:40} -> {r.endpoint}")
+        print("=== END MAP ===\n")
+    except Exception as e:
+        print("Route map print failed:", e)
+
+# ----------------------------- Health Check -----------------------------
+@app.get("/healthz")
+def healthz():
+    return jsonify(ok=True)
+
+@app.get("/routes.json")
+def routes_json():
+    with app.app_context():
+        items = []
+        for r in app.url_map.iter_rules():
+            items.append({
+                "rule": r.rule,
+                "endpoint": r.endpoint,
+                "methods": sorted(m for m in r.methods if m not in {"HEAD","OPTIONS"})
+            })
+    return jsonify(items)
+
 # ----------------------------- Main --------------------------------
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5055, debug=True)
+    _print_route_map(app)
+    app.run(host="0.0.0.0", port=5000, debug=False)

@@ -1,3 +1,18 @@
+/* When filters are hidden, calendar must take full width */
+.filters-off #filtersPanel { display: none !important; }
+.filters-off #calendar-area { grid-column: 1 / -1; width: 100%; min-width: 0; }
+
+/* Prevent accidental max-width clamps */
+#calendar-area, #calendar-grid {
+  min-width: 0;
+}
+
+/* If you have a generic container with max-width, disable it for calendar shells */
+.calendar-shell, .calendar-wrap {
+  max-width: none !important;
+  width: 100% !important;
+}
+
 /* === Calendar grid + Leads lanes (scoped) === */
 
 /* Calendar container (visual + busy) */
