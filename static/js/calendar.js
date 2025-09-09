@@ -53,6 +53,7 @@ export function buildCalendarSkeleton() {
 
   grid.appendChild(mkLeadsBox("Leads (Tuesday–Wednesday)", "2 / span 2"));
   grid.appendChild(mkLeadsBox("Leads (Thursday–Friday)", "4 / span 2"));
+  grid.appendChild(mkLeadsBox("Leads (Saturday–Sunday)", "6 / span 2"));
 
   DAYS.forEach((day) => {
     const col = document.createElement("div");
@@ -238,7 +239,8 @@ export function renderLeadsFromData(leads) {
   if (!leads) return;
   const leadsKeys = {
     "Leads (Tuesday–Wednesday)": "TueWed",
-    "Leads (Thursday–Friday)": "ThuFri"
+    "Leads (Thursday–Friday)": "ThuFri",
+    "Leads (Saturday–Sunday)": "SatSun"
   };
   for (const label in leadsKeys) {
     const dayKey = leadsKeys[label];
